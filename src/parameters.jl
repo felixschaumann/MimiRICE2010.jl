@@ -3,8 +3,15 @@ function getrice2010parameters(filename)
 
     T = 60
     # p[:timesteps] = 1:T # Time periods (5 years per period); not currently used in constructrice
-    regions = ["US", "EU", "Japan", "Russia", "Eurasia", "China", "India", "MidEast", "Africa", "LatAm", "OHI", "OthAsia"]
+    rice_regions = ["US", "EU", "Japan", "Russia", "Eurasia", "China", "India", "MidEast", "Africa", "LatAm", "OHI", "OthAsia"]
+    regions = ["rich", "poor"]
 
+    # Define aggregation mapping
+    region_mapping = Dict(
+        "rich" => ["US", "EU", "Japan", "Russia", "OHI"],
+        "poor" => ["Eurasia", "China", "India", "MidEast", "Africa", "LatAm", "OthAsia"]
+    )
+    
     # Open RICE_2010 Excel File to Read Parameters
     f = readxlsx(filename)
 
@@ -16,15 +23,18 @@ function getrice2010parameters(filename)
     ifopt = true # Indicator where optimized is 1 and base is 0
 
     # Preferences
-    p[:elasmu] =  getparam_single(f, "B18:B18", regions) # Elasticity of MU of consumption
+    # p[:elasmu] =  getparam_single(f, "B18:B18", rice_regions) # Elasticity of MU of consumption
+    p[:elasmu] =  aggregate_regions(getparam_single(f, "B18:B18", rice_regions), region_mapping, rice_regions, mean) # Elasticity of MU of consumption
     # p[:prstp] =  getparam_single(f, "B15:B15", regions) # Rate of Social Time Preference; not currently used in constructrice
 
     # Population and technology
 
     # Capital elasticity in production function
     p[:gama] = 0.300
-    p[:dk]  = getparam_single(f, "B8:B8", regions) # Depreciation rate on capital (per year)
-    p[:k0] = getparam_single(f, "B11:B11", regions) #Initial capital
+    # p[:dk]  = getparam_single(f, "B8:B8", regions) # Depreciation rate on capital (per year)
+    p[:dk]  = aggregate_regions(getparam_single(f, "B8:B8", rice_regions), region_mapping, rice_regions, mean) # Depreciation rate on capital (per year)
+    # p[:k0] = getparam_single(f, "B11:B11", regions) #Initial capital
+    p[:k0] = aggregate_regions(getparam_single(f, "B11:B11", rice_regions), region_mapping, rice_regions, sum) #Initial capital
     # p[:miu0] = getparam_single(f, "B103:B103", regions) # Initial emissions control rate for base case 2010; not currently used in constructrice
     # p[:miubase] = getparam_timeseries(f, "B103:BI103", regions, T) # Optimized emission control rate results from RICE2010 (base case); duplicate line to p[:MIU]
 
@@ -64,17 +74,18 @@ function getrice2010parameters(filename)
     p[:fco22x] = 3.8 # Forcings of equilibrium CO2 doubling (Wm-2)
 
     # Climate damage parameters
-    p[:a1] = getparam_single(f, "B24:B24", regions) # Damage intercept
-    p[:a2] = getparam_single(f, "B25:B25", regions) # Damage quadratic term
-    p[:a3] = getparam_single(f, "B26:B26", regions) # Damage exponent
+    p[:a1] = aggregate_regions(getparam_single(f, "B24:B24", rice_regions), region_mapping, rice_regions, mean) # Damage intercept
+    p[:a2] = aggregate_regions(getparam_single(f, "B25:B25", rice_regions), region_mapping, rice_regions, mean) # Damage quadratic term
+    p[:a3] = aggregate_regions(getparam_single(f, "B26:B26", rice_regions), region_mapping, rice_regions, mean) # Damage exponent
 
     # Welfare Weights
     alpha0 = transpose(f["Data"]["B359:BI370"]) # Read in alpha
-    p[:alpha] = convert(Array{Float64}, alpha0) # Convert to type used by Mimi
+    # !!! NOT PROPERLY AGGREGATED (UNWEIGHTED AVERAGE) !!!
+    p[:alpha] = aggregate_regions(convert(Array{Float64}, alpha0), region_mapping, rice_regions, mean) # Convert to type used by Mimi
 
     # Abatement cost
     # Exponent of control cost function
-    p[:expcost2] = getparam_single(f, "B38:B38", regions)
+    p[:expcost2] = aggregate_regions(getparam_single(f, "B38:B38", rice_regions), region_mapping, rice_regions, mean)
 
     # Availability of fossil fuels
     # Maximum cumulative extraction fossil fuels (GtC)
@@ -82,26 +93,27 @@ function getrice2010parameters(filename)
 
     # Scaling parameters
     # Multiplicative scaling coefficient
-    p[:scale1] = getparam_single(f, "B52:B52", regions)
-    p[:scale1] = getparam_single(f, "B52:B52", regions)
+    # p[:scale1] = getparam_single(f, "B52:B52", regions)
+    p[:scale1] = aggregate_regions(getparam_single(f, "B52:B52", rice_regions), region_mapping, rice_regions, mean)
 
+    # !!! NOT PROPERLY AGGREGATED (UNWEIGHTED AVERAGE) !!!
     # Additive scaling coefficient (combines two additive scaling coefficients from RICE for calculating utility with welfare weights)
-    scale2 = Array{Float64}(undef, length(regions))
-    for (i,r) in enumerate(regions)
+    scale2 = Array{Float64}(undef, length(rice_regions))
+    for (i,r) in enumerate(rice_regions)
         data = f[r]["B53:C53"]
         scale2[i] = data[1] - data[2]
     end
-    p[:scale2] = scale2
+    p[:scale2] = aggregate_regions(scale2, region_mapping, rice_regions, mean)
 
     # p[:savebase] = getparam_timeseries(f, "B97:BI97", regions, T) # Optimized savings rate in base case for RICE2010; not currently used in constructrice
     # p[:optlrsav] = getparam_single(f, "BI97:BI97", regions) # Optimized savings rate in base case for RICE2010 for last period (fraction of gross output); not currently used in constructrice
-    p[:l] = getparam_timeseries(f, "B56:BI56", regions, T) # Level of population and labor
-    p[:al] = getparam_timeseries(f, "B20:BI20", regions, T) # Level of total factor productivity
-    p[:sigma] = getparam_timeseries(f, "B40:BI40", regions, T) # CO2-equivalent-emissions output ratio
-    p[:pbacktime] = getparam_timeseries(f, "B36:BI36", regions, T) # Backstop price
-    p[:cost1] = getparam_timeseries(f, "B31:BI31", regions, T) # Adjusted cost for backstop
-    regtree = getparam_timeseries(f, "B43:BI43", regions, T) # Regional Emissions from Land Use Change
-    p[:rr] = getparam_timeseries(f, "B17:BI17", regions, T) # Social Time Preference Factor
+    p[:l] = aggregate_regions(getparam_timeseries(f, "B56:BI56", rice_regions, T), region_mapping, rice_regions, sum) # Level of population and labor
+    p[:al] = aggregate_regions(getparam_timeseries(f, "B20:BI20", rice_regions, T), region_mapping, rice_regions, mean) # Level of total factor productivity
+    p[:sigma] = aggregate_regions(getparam_timeseries(f, "B40:BI40", rice_regions, T), region_mapping, rice_regions, mean) # CO2-equivalent-emissions output ratio
+    p[:pbacktime] = aggregate_regions(getparam_timeseries(f, "B36:BI36", rice_regions, T), region_mapping, rice_regions, mean) # Backstop price
+    p[:cost1] = aggregate_regions(getparam_timeseries(f, "B31:BI31", rice_regions, T), region_mapping, rice_regions, mean) # Adjusted cost for backstop
+    regtree = aggregate_regions(getparam_timeseries(f, "B43:BI43", rice_regions, T), region_mapping, rice_regions, sum) # Regional Emissions from Land Use Change
+    p[:rr] = aggregate_regions(getparam_timeseries(f, "B17:BI17", rice_regions, T), region_mapping, rice_regions, mean) # Social Time Preference Factor
 
     # Global Emissions from Land Use Change (Sum of regional emissions for land use change in RICE model)
     etree = Array{Float64}(undef, T)
@@ -122,16 +134,16 @@ function getrice2010parameters(filename)
     p[:partfract] = ones(60, length(regions))
 
     # Savings Rate (base case RICE2010)
-    p[:S] = getparam_timeseries(f, "B97:BI97", regions, T)
+    p[:S] = aggregate_regions(getparam_timeseries(f, "B97:BI97", rice_regions, T), region_mapping, rice_regions, mean)
 
     # MIU (base case RICE2010)
-    p[:MIU] = getparam_timeseries(f, "B103:BI103", regions, T)
+    p[:MIU] = aggregate_regions(getparam_timeseries(f, "B103:BI103", rice_regions, T), region_mapping, rice_regions, mean)
 
     # SEA LEVEL RISE PARAMETERS
-    p[:slrmultiplier] = getparam_single(f, "B49:B49", regions) # Multiplier for SLR
-    p[:slrelasticity] = getparam_single(f, "C49:C49", regions) # SLR elasticity of substitution
-    p[:slrdamlinear] = getparam_single(f, "B48:B48", regions) # SLR damage parameter (linear)
-    p[:slrdamquadratic] = getparam_single(f, "C48:C48", regions) # SLR damage parameter (quadratic)
+    p[:slrmultiplier] = aggregate_regions(getparam_single(f, "B49:B49", rice_regions), region_mapping, rice_regions, mean) # Multiplier for SLR
+    p[:slrelasticity] = aggregate_regions(getparam_single(f, "C49:C49", rice_regions), region_mapping, rice_regions, mean) # SLR elasticity of substitution
+    p[:slrdamlinear] = aggregate_regions(getparam_single(f, "B48:B48", rice_regions), region_mapping, rice_regions, mean) # SLR damage parameter (linear)
+    p[:slrdamquadratic] = aggregate_regions(getparam_single(f, "C48:C48", rice_regions), region_mapping, rice_regions, mean) # SLR damage parameter (quadratic)
 
     # Thermal Expansion
     p[:therm0] = f["SLR"]["B9:B9"][1] # Thermal Expansion initial conditions (SLR per decade)

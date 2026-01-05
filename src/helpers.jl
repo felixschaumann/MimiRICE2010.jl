@@ -29,3 +29,24 @@ function getparam_timeseries(f, range::AbstractString, regions, T)
     end
     return vals
 end
+
+function aggregate_regions(data, mapping::Dict{String, Vector{String}}, rice_regions, agg_method=sum)
+    # Get aggregated region names
+    agg_regions = ["rich", "poor"]
+    
+    if ndims(data) == 1  # Single values per region
+        agg_data = zeros(length(agg_regions))
+        for (i, agg_reg) in enumerate(agg_regions)
+            indices = [findfirst(==(r), rice_regions) for r in mapping[agg_reg]]
+            agg_data[i] = agg_method(data[indices])
+        end
+    else  # Time series (T × regions)
+        T = size(data, 1)
+        agg_data = zeros(T, length(agg_regions))
+        for (i, agg_reg) in enumerate(agg_regions)
+            indices = [findfirst(==(r), rice_regions) for r in mapping[agg_reg]]
+            agg_data[:, i] = agg_method(data[:, indices], dims=2)
+        end
+    end
+    return agg_data
+end

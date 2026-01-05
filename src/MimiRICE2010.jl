@@ -2,6 +2,7 @@ module MimiRICE2010
 
 using Mimi
 using XLSX: readxlsx
+using Statistics
 
 include("helpers.jl")
 include("marginaldamage.jl")
@@ -26,7 +27,8 @@ function constructrice(p)
 
     m = Model()
     set_dimension!(m, :time, model_years)
-    set_dimension!(m, :regions, ["US", "EU", "Japan", "Russia", "Eurasia", "China", "India", "MidEast", "Africa", "LatAm", "OHI", "OthAsia"])
+    # set_dimension!(m, :regions, ["US", "EU", "Japan", "Russia", "Eurasia", "China", "India", "MidEast", "Africa", "LatAm", "OHI", "OthAsia"])
+    set_dimension!(m, :regions, ["rich", "poor"])
 
     #--------------------------------------------------------------------------
     # Add components in order
