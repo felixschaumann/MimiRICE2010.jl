@@ -7,7 +7,8 @@
     REGUTILITY = Variable(index=[regions]) # Welfare Function
     UTILITY = Variable()
 
-    COST_CONSTRAINT_PENALTY = Parameter(index=[time, regions]) # Penalty for exceeding cost cap.
+    COST_CONSTRAINT_PENALTY = Parameter(index=[time, regions], default=zeros(60, 2)) # Penalty for exceeding cost cap.
+    CARBON_CONSTRAINT_PENALTY = Parameter(index=[time, regions]) # Penalty for exceeding carbon budget.
 
     CPC = Parameter(index=[time, regions])
     l = Parameter(index=[time, regions]) # Level of population and labor
@@ -34,9 +35,11 @@
                 v.CEMUTOTPER[t,r] = v.PERIODU[t,r] * p.l[t,r] * p.rr[t,r]
             else
                 v.CEMUTOTPER[t,r] = v.PERIODU[t,r] * p.l[t,r] * p.rr[t,r] / (1. - ((p.rr[t-1,r] / (1. + 0.015)^10) / p.rr[t-1,r]))
+                
+                v.CEMUTOTPER[t,r] = v.CEMUTOTPER[t,r] - p.CARBON_CONSTRAINT_PENALTY[t,r]
             end
 
-            # COST CONSTRAINT PENALTY - uncomment to activate
+            # COST CONSTRAINT PENALTY
             v.CEMUTOTPER[t,r] = v.CEMUTOTPER[t,r] - p.COST_CONSTRAINT_PENALTY[t,r]
         end
 

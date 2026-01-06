@@ -64,14 +64,14 @@ end
 #       m:                  An instance of RICE2010 consistent with user model settings.
 #----------------------------------------------------------------------------------------------------------------------
 
-function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float64, backstop_prices::Array{Float64,2}, remove_negishi::Bool, add_ad::Bool=false, opt_ad::Bool=false, stock_ad::Bool=false)
+function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float64, backstop_prices::Array{Float64,2}, remove_negishi::Bool, add_ad::Bool=false, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing)
 
     if opt_ad == true
         add_ad = true
     end
 
     # Get an instance of RICE given user settings.
-    m = create_rice(ρ, η, remove_negishi, add_ad)
+    m = create_rice(ρ, η, remove_negishi, add_ad, stock_ad, cbudget)
 
     n_regions = length(m.md.dim_dict[:regions])
 
@@ -178,14 +178,14 @@ end
 #----------------------------------------------------------------------------------------------------------------------
 
 
-function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_time::Int, tolerance::Float64, backstop_prices::Array{Float64,2}; run_utilitarian::Bool=true, ρ::Float64=0.008, η::Float64=1.5, remove_negishi::Bool=true, add_ad::Bool=false, opt_ad::Bool=false, stock_ad::Bool=false)
+function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_time::Int, tolerance::Float64, backstop_prices::Array{Float64,2}; run_utilitarian::Bool=true, ρ::Float64=0.008, η::Float64=1.5, remove_negishi::Bool=true, add_ad::Bool=false, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing)
 
     # -------------------------------------------------------------
     # Create objective function and values needed for optimization.
     #--------------------------------------------------------------
 
     # Create objective function and instance of RICE, given user settings.
-    objective_function, optimal_model, n_regions = construct_rice_objective(run_utilitarian, ρ, η, backstop_prices, remove_negishi, add_ad, opt_ad, stock_ad)
+    objective_function, optimal_model, n_regions = construct_rice_objective(run_utilitarian, ρ, η, backstop_prices, remove_negishi, add_ad, opt_ad, stock_ad, cbudget)
 
     # Set number of optimzation objectives (will differ between cost-minimization and utilitarian approaches).
     if run_utilitarian == false

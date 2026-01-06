@@ -6,19 +6,21 @@
 using Mimi
 using DataFrames
 using CSVFiles
+include(joinpath(@__DIR__, "..", "src", "MimiRICE2010.jl"))
 using Main.MimiRICE2010
 
 include(joinpath(@__DIR__, "..", "src", "new_components", "updated_welfare_rice.jl"))
 include(joinpath(@__DIR__, "..", "src", "new_components", "ad_neteconomy_component.jl"))
 include(joinpath(@__DIR__, "..", "src", "new_components", "ad_damages_component.jl"))
 include(joinpath(@__DIR__, "..", "src", "new_components", "ad_welfare_component.jl"))
+include(joinpath(@__DIR__, "..", "src", "new_components", "ad_emissions_component.jl"))
 
 # Load necessary model and data files.
 # un_population = DataFrame(load(joinpath(@__DIR__, "..", "data", "UN_population_rice_regions.csv"), skiplines_begin=3))
 # t_opt_ad = DataFrame(load(joinpath(@__DIR__, "..", "results/MyResults/orig_var_ad_rice_utilitarian/Adaptation.csv"), skiplines_begin=0))[5, :]
 
 # Create a function to construct an updated version of RICE2010.
-function create_rice(ρ::Float64, η::Float64, remove_negishi::Bool, add_ad::Bool=false, stock_ad::Bool=false)
+function create_rice(ρ::Float64, η::Float64, remove_negishi::Bool, add_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing)
 
     # ---------------------------------------------
     # Create MimiRICE2010 model and set parameters.
@@ -37,27 +39,40 @@ function create_rice(ρ::Float64, η::Float64, remove_negishi::Bool, add_ad::Boo
     # Set population to updated UN projections.
     # update_param!(m, :l, Matrix(un_population))
 
+    if isa(cbudget, Float64)
+        replace!(m, :emissions => ad_emissions)
+        replace!(m, :welfare=>ad_welfare, reconnect=true)
+        connect_param!(m, :welfare, :CARBON_CONSTRAINT_PENALTY, :emissions, :CARBON_CONSTRAINT_PENALTY)
+
+        # Set carbon budget
+        set_param!(m, :emissions, :CBUDGET, cbudget) # Set cumulative global carbon budget (GtC)
+        set_param!(m, :emissions, :CONSTRAINT_PENALTY_STRENGTH, 10000) # Set to 0 to disable constraint (10000 works well)
+    end    
+
     if add_ad == true
         replace!(m, :damages => ad_damages)
         replace!(m, :neteconomy => ad_neteconomy)
         connect_param!(m, :neteconomy, :ADAPTCOST, :damages, :ADAPTCOST)
         
         replace!(m, :welfare=>ad_welfare, reconnect=true)
-        # Connect cost constraint penalty (commented out for now - uncomment to activate)
+        # Connect constraint penalties
         connect_param!(m, :welfare, :COST_CONSTRAINT_PENALTY, :neteconomy, :COST_CONSTRAINT_PENALTY)
+        connect_param!(m, :welfare, :CARBON_CONSTRAINT_PENALTY, :emissions, :CARBON_CONSTRAINT_PENALTY)
 
         # Initialize cost constraint parameters (inactive by default)
         set_param!(m, :neteconomy, :COST_CAP_FRACTION, 0.003) # 0.3% of GDP - set to large value to effectively disable
-        set_param!(m, :neteconomy, :CONSTRAINT_PENALTY_STRENGTH, 0) # Set to 0 to disable constraint (10000 works well)
+        if !isa(cbudget, Float64)
+            set_param!(m, :neteconomy, :CONSTRAINT_PENALTY_STRENGTH, 10000) # Set to 0 to disable constraint (10000 works well)
+        end
         
         # Set adapted temperature to a linear increase from 0.5 degrees in 2010 to 0.5 degrees in 2100. And 0.5 degrees from 2100 to 2200.
         T_AD = zeros(60, 2)
         for t in 1:20
             T_AD[t, :] .= 0.5 + (t - 1) * (0.5 - 0.5) / 20
-        end
+        end    
         for t in 21:60
             T_AD[t, :] .= 0.5
-        end
+        end    
         set_param!(m, :damages, :T_AD, T_AD)
         set_param!(m, :damages, :ADAPTFRAC, ones(60, 2) .* 0.0) # initially set to zero adaptation
         set_param!(m, :damages, :OPT_T_SHIFT, 0.0) # set optimal temperature shift parameter

@@ -26,7 +26,7 @@ remove_negishi = false  # set to true if the runs being analysed were done witho
 # Load the data.
 ut_emissions = CSV.read("./results/MyResults/rice_utilitarian"*(remove_negishi ? "_no_negishi" : "")*"/Emissions.csv", DataFrame)
 # ad_ut_emissions = CSV.read("./results/MyResults/ad_rice_utilitarian/Emissions.csv", DataFrame)
-# var_ad_ut_emissions = CSV.read("./results/MyResults/var_ad_rice_utilitarian"*(remove_negishi ? "_no_negishi" : "")*"/Emissions.csv", DataFrame)
+var_ad_ut_emissions = CSV.read("./results/MyResults/var_ad_rice_utilitarian"*(remove_negishi ? "_no_negishi" : "")*"/Emissions.csv", DataFrame)
 stock_ad_ut_emissions = CSV.read("./results/MyResults/stock_ad_rice_utilitarian"*(remove_negishi ? "_no_negishi" : "")*"/Emissions.csv", DataFrame)
 
 #%%
@@ -34,31 +34,30 @@ stock_ad_ut_emissions = CSV.read("./results/MyResults/stock_ad_rice_utilitarian"
 
 rename!(ut_emissions, region_names)
 # rename!(ad_ut_emissions, region_names)
-# rename!(var_ad_ut_emissions, region_names)
+rename!(var_ad_ut_emissions, region_names)
 rename!(stock_ad_ut_emissions, region_names)
 
 cum_em = DataFrame(Region=names(ut_emissions), cum_em=[sum(ut_emissions[:, col]) for col in names(ut_emissions)])
 # ad_cum_em = DataFrame(Region=names(ad_ut_emissions), ad_cum_em=[sum(ad_ut_emissions[:, col]) for col in names(ad_ut_emissions)])
-# var_ad_cum_em = DataFrame(Region=names(var_ad_ut_emissions), var_ad_cum_em=[sum(var_ad_ut_emissions[:, col]) for col in names(var_ad_ut_emissions)])
+var_ad_cum_em = DataFrame(Region=names(var_ad_ut_emissions), var_ad_cum_em=[sum(var_ad_ut_emissions[:, col]) for col in names(var_ad_ut_emissions)])
 stock_ad_cum_em = DataFrame(Region=names(stock_ad_ut_emissions), stock_ad_cum_em=[sum(stock_ad_ut_emissions[:, col]) for col in names(stock_ad_ut_emissions)])
 
 # total emissions
 baseline_cum_em_total = 10 .* sum([sum(ut_emissions[:, col]) for col in names(ut_emissions)])
-# var_ad_cum_em_total = 10 .* sum([sum(var_ad_ut_emissions[:, col]) for col in names(var_ad_ut_emissions)])
+var_ad_cum_em_total = 10 .* sum([sum(var_ad_ut_emissions[:, col]) for col in names(var_ad_ut_emissions)])
 stock_ad_cum_em_total = 10 .* sum([sum(stock_ad_ut_emissions[:, col]) for col in names(stock_ad_ut_emissions)])
 
 # Combine the dataframes
-combined_emissions = innerjoin(stock_ad_cum_em, # var_ad_cum_em, 
-    cum_em, on=:Region)
+combined_emissions = innerjoin(stock_ad_cum_em, var_ad_cum_em, cum_em, on=:Region)
 
 # Calculate normalized shares per country
 combined_emissions[!, :stock_ad_cum_em_share] = combined_emissions.stock_ad_cum_em ./ sum(combined_emissions.stock_ad_cum_em)
-# combined_emissions[!, :var_ad_cum_em_share] = combined_emissions.var_ad_cum_em ./ sum(combined_emissions.var_ad_cum_em)
+combined_emissions[!, :var_ad_cum_em_share] = combined_emissions.var_ad_cum_em ./ sum(combined_emissions.var_ad_cum_em)
 combined_emissions[!, :cum_em_share] = combined_emissions.cum_em ./ sum(combined_emissions.cum_em)
 
 # Calculate differences between scenarios
 combined_emissions[!, :stock_ad_Change] = (combined_emissions.stock_ad_cum_em_share .- combined_emissions.cum_em_share) ./ combined_emissions.cum_em_share .* 100
-# combined_emissions[!, :var_ad_Change] = (combined_emissions.var_ad_cum_em_share .- combined_emissions.cum_em_share) ./ combined_emissions.cum_em_share .* 100
+combined_emissions[!, :var_ad_Change] = (combined_emissions.var_ad_cum_em_share .- combined_emissions.cum_em_share) ./ combined_emissions.cum_em_share .* 100
 
 #%% make bar chart of percentage change in emissions share
 
