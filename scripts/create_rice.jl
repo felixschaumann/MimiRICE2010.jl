@@ -20,7 +20,7 @@ include(joinpath(@__DIR__, "..", "src", "new_components", "ad_emissions_componen
 # t_opt_ad = DataFrame(load(joinpath(@__DIR__, "..", "results/MyResults/orig_var_ad_rice_utilitarian/Adaptation.csv"), skiplines_begin=0))[5, :]
 
 # Create a function to construct an updated version of RICE2010.
-function create_rice(ρ::Float64, η::Float64, remove_negishi::Bool, add_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing)
+function create_rice(ρ::Float64, η::Float64, remove_negishi::Bool, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing)
 
     # ---------------------------------------------
     # Create MimiRICE2010 model and set parameters.
@@ -46,10 +46,10 @@ function create_rice(ρ::Float64, η::Float64, remove_negishi::Bool, add_ad::Boo
 
         # Set carbon budget
         set_param!(m, :emissions, :CBUDGET, cbudget) # Set cumulative global carbon budget (GtC)
-        set_param!(m, :emissions, :CONSTRAINT_PENALTY_STRENGTH, 10000) # Set to 0 to disable constraint (10000 works well)
+        set_param!(m, :emissions, :CONSTRAINT_PENALTY_STRENGTH, 0) # Set to 0 to disable constraint (10000 works well)
     end    
 
-    if add_ad == true
+    if opt_ad == true
         replace!(m, :damages => ad_damages)
         replace!(m, :neteconomy => ad_neteconomy)
         connect_param!(m, :neteconomy, :ADAPTCOST, :damages, :ADAPTCOST)
@@ -62,7 +62,7 @@ function create_rice(ρ::Float64, η::Float64, remove_negishi::Bool, add_ad::Boo
         # Initialize cost constraint parameters (inactive by default)
         set_param!(m, :neteconomy, :COST_CAP_FRACTION, 0.003) # 0.3% of GDP - set to large value to effectively disable
         if !isa(cbudget, Float64)
-            set_param!(m, :neteconomy, :CONSTRAINT_PENALTY_STRENGTH, 10000) # Set to 0 to disable constraint (10000 works well)
+            set_param!(m, :neteconomy, :CONSTRAINT_PENALTY_STRENGTH, 0) # Set to 0 to disable constraint (10000 works well)
         end
         
         # Set adapted temperature to a linear increase from 0.5 degrees in 2010 to 0.5 degrees in 2100. And 0.5 degrees from 2100 to 2200.
@@ -87,6 +87,8 @@ function create_rice(ρ::Float64, η::Float64, remove_negishi::Bool, add_ad::Boo
 
         if stock_ad == true
             set_param!(m, :damages, :HAS_STOCK_AD, true)
+        else
+            set_param!(m, :damages, :HAS_STOCK_AD, false)
         end
 
     end

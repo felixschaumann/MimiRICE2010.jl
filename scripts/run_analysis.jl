@@ -59,15 +59,15 @@ results_folder = "MyResults"
 n_opt_periods = 30
 
 # Optimization algorithm (the type should be a Symbol, e.g. :LN_SBPLX). See options at http://ab-initio.mit.edu/wiki/index.php/NLopt_Algorithms
-optimization_algorithm = :LN_SBPLX
+optimization_algorithm = :LN_COBYLA # :LN_SBPLX
 
 # Maximum time in seconds to run each model (NOTE: FUND takes much longer to optimize than RICE).
-stop_time_rice = 500
-stop_time_fund = 7500
+stop_time_rice = 7200
+# stop_time_fund = 7500
 
 # Relative tolerance criteria for convergence (will stop if |Δf| / |f| < tolerance from one iteration to the next.)
 tolerance_rice = 1e-10
-tolerance_fund = 1e-10
+# tolerance_fund = 1e-10
 
 #%%
 #------------------------------------------------------------------------------------------------------
@@ -122,10 +122,10 @@ end
 #------------------------------------------------------------------------------------------------------
 # Run RICE Utilitarian Optimization.
 #------------------------------------------------------------------------------------------------------
-add_ad = true
+
 opt_ad = true # whether to optimise (endogenise) adaptation or have it exogenous/fixed
 stock_ad = true # whether to have stock adaptation (true) or flow adaptation (false)
-ad_string = add_ad ? "ad_" : ""
+ad_string = opt_ad ? "ad_" : ""
 if opt_ad == true
     ad_string = "var_ad_"
     if stock_ad == true
@@ -133,7 +133,7 @@ if opt_ad == true
     end
 end
 
-carbon_budget = 1021.0
+carbon_budget =  921.0 # 1021.0
 
 if rice_utilitarian == true
 
@@ -141,7 +141,7 @@ if rice_utilitarian == true
 
     # stop_time_rice originally 500
     # Optimize model.
-    @time opt_output_rice_utilitarian, opt_emissions_rice_utilitarian, opt_mitigation_rice_utilitarian, opt_flow_adaptation_rice_utilitarian, opt_stock_adaptation_rice_utilitarian, opt_tax_rice_utilitarian, opt_model_rice_utilitarian, convergence_rice_utilitarian = optimize_rice(optimization_algorithm, n_opt_periods, 5000, tolerance_rice, backstop_prices, run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi, add_ad=add_ad, opt_ad=opt_ad, stock_ad=stock_ad, cbudget=carbon_budget)
+    @time opt_output_rice_utilitarian, opt_emissions_rice_utilitarian, opt_mitigation_rice_utilitarian, opt_flow_adaptation_rice_utilitarian, opt_stock_adaptation_rice_utilitarian, opt_tax_rice_utilitarian, opt_model_rice_utilitarian, convergence_rice_utilitarian = optimize_rice(optimization_algorithm, n_opt_periods, stop_time_rice, tolerance_rice, backstop_prices, run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi, opt_ad=opt_ad, stock_ad=stock_ad, cbudget=carbon_budget)
 
     # Create folder to store some key results.
     output_directory = joinpath(@__DIR__, "../", "results", results_folder, "$(ad_string)rice_utilitarian"*(remove_negishi ? "_no_negishi" : ""))
@@ -170,4 +170,4 @@ end
 #------------------------------------------------------------------------------------------------------
 # End of Analysis.
 #------------------------------------------------------------------------------------------------------
-println("Analysis complete.")
+println("Analysis complete.")  

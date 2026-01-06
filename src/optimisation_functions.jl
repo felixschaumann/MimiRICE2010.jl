@@ -64,26 +64,26 @@ end
 #       m:                  An instance of RICE2010 consistent with user model settings.
 #----------------------------------------------------------------------------------------------------------------------
 
-function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float64, backstop_prices::Array{Float64,2}, remove_negishi::Bool, add_ad::Bool=false, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing)
-
-    if opt_ad == true
-        add_ad = true
-    end
+function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float64, backstop_prices::Array{Float64,2}, remove_negishi::Bool, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing)
 
     # Get an instance of RICE given user settings.
-    m = create_rice(ρ, η, remove_negishi, add_ad, stock_ad, cbudget)
+    m = create_rice(ρ, η, remove_negishi, opt_ad, stock_ad, cbudget)
 
     n_regions = length(m.md.dim_dict[:regions])
 
     #--------------------------------------------------------------------------------------------------------
     # Create either a (i) cost-minimization or (ii) utilitarian objective function for this instance of RICE.
     #--------------------------------------------------------------------------------------------------------
-    rice_objective = if run_utilitarian == false
+
+    rice_objective = nothing
+    rice_constraint = nothing
+
+    if run_utilitarian == false
 
         #---------------------------------------
         # Cost-minimzation price objective function.
         #---------------------------------------
-        function(optimal_global_tax::Array{Float64,1})
+        rice_objective = function(optimal_global_tax::Array{Float64,1})
             # Set the regional mitigation rates to the value implied by the global optimal carbon tax and return total welfare.
             update_param!(m, :MIU, mitigation_from_tax(optimal_global_tax, backstop_prices, 2.8))
             run(m)
@@ -91,57 +91,87 @@ function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float6
         end
 
     else
-        if opt_ad == true
-            if stock_ad == true
-                # Joint mitigation and (flow and stock) adaptation optimization
-                function(optimal_mitigation_adaptation_vector::Array{Float64,1})
-                    n_opt_periods = Int(length(optimal_mitigation_adaptation_vector) / (n_regions*3))
-                    mitigation_vec = optimal_mitigation_adaptation_vector[1:(n_opt_periods*n_regions)]
-                    flow_adaptation_vec = optimal_mitigation_adaptation_vector[(n_opt_periods*n_regions+1):(n_opt_periods*n_regions*2)]
-                    stock_adaptation_vec = optimal_mitigation_adaptation_vector[(n_opt_periods*n_regions*2+1):end]
+        # Create shared cache for objective and constraint evaluation
+        # This ensures the model runs only once per unique parameter vector
+        cache_x = Ref{Union{Nothing, Vector{Float64}}}(nothing)
+        cache_utility = Ref(0.0)
+        cache_cca = Ref(0.0)
+
+        # Shared evaluation function that updates cache if needed
+        function evaluate_model!(x::Array{Float64,1})
+            # Check if we need to run the model (x has changed)
+            if cache_x[] === nothing || cache_x[] != x
+                # Parse and update model parameters based on optimization type
+                if opt_ad == true
+                    if stock_ad == true
+                        # Joint mitigation and (flow and stock) adaptation optimization
+                        n_opt_periods = Int(length(x) / (n_regions*3))
+                        mitigation_vec = x[1:(n_opt_periods*n_regions)]
+                        flow_adaptation_vec = x[(n_opt_periods*n_regions+1):(n_opt_periods*n_regions*2)]
+                        stock_adaptation_vec = x[(n_opt_periods*n_regions*2+1):end]
+                        optimal_regional_mitigation = vcat(zeros(1,n_regions), ones(59,n_regions))
+                        optimal_regional_mitigation[2:(n_opt_periods + 1), :] = reshape(mitigation_vec, (n_opt_periods, n_regions))
+                        optimal_regional_flow_adaptation = vcat(zeros(1,n_regions), ones(59,n_regions) .* 0.5)
+                        optimal_regional_flow_adaptation[2:(n_opt_periods + 1), :] = reshape(flow_adaptation_vec, (n_opt_periods, n_regions))
+                        optimal_regional_stock_adaptation = vcat(zeros(1,n_regions), ones(59,n_regions) .* 0.25)
+                        optimal_regional_stock_adaptation[2:(n_opt_periods + 1), :] = reshape(stock_adaptation_vec, (n_opt_periods, n_regions))
+                        update_param!(m, :MIU, optimal_regional_mitigation)
+                        update_param!(m, :T_AD_FLOW, optimal_regional_flow_adaptation)
+                        update_param!(m, :I_AD, optimal_regional_stock_adaptation)
+                    else
+                        # Joint mitigation and adaptation optimization
+                        n_opt_periods = Int(length(x) / (n_regions*2))
+                        mitigation_vec = x[1:(n_opt_periods*n_regions)]
+                        adaptation_vec = x[(n_opt_periods*n_regions+1):end]
+                        optimal_regional_mitigation = vcat(zeros(1,n_regions), ones(59,n_regions))
+                        optimal_regional_mitigation[2:(n_opt_periods + 1), :] = reshape(mitigation_vec, (n_opt_periods, n_regions))
+                        optimal_regional_adaptation = vcat(zeros(1,n_regions), ones(59,n_regions) .* 0.5)
+                        optimal_regional_adaptation[2:(n_opt_periods + 1), :] = reshape(adaptation_vec, (n_opt_periods, n_regions))
+                        update_param!(m, :MIU, optimal_regional_mitigation)
+                        update_param!(m, :T_AD, 2 .* optimal_regional_adaptation)
+                    end
+                else
+                    # Mitigation-only optimization
+                    n_opt_periods = Int(length(x) / n_regions)
                     optimal_regional_mitigation = vcat(zeros(1,n_regions), ones(59,n_regions))
-                    optimal_regional_mitigation[2:(n_opt_periods + 1), :] = reshape(mitigation_vec, (n_opt_periods, n_regions))
-                    optimal_regional_flow_adaptation = vcat(zeros(1,n_regions), ones(59,n_regions) .* 0.5)
-                    optimal_regional_flow_adaptation[2:(n_opt_periods + 1), :] = reshape(flow_adaptation_vec, (n_opt_periods, n_regions))
-                    optimal_regional_stock_adaptation = vcat(zeros(1,n_regions), ones(59,n_regions) .* 0.25)
-                    optimal_regional_stock_adaptation[2:(n_opt_periods + 1), :] = reshape(stock_adaptation_vec, (n_opt_periods, n_regions))
+                    optimal_regional_mitigation[2:(n_opt_periods + 1), :] = reshape(x, (n_opt_periods, n_regions))
                     update_param!(m, :MIU, optimal_regional_mitigation)
-                    update_param!(m, :T_AD_FLOW, optimal_regional_flow_adaptation)
-                    update_param!(m, :I_AD, optimal_regional_stock_adaptation)
-                    run(m)
-                    return m[:welfare, :UTILITY]
                 end
-            else
-                # Joint mitigation and adaptation optimization
-                function(optimal_mitigation_adaptation_vector::Array{Float64,1})
-                    n_opt_periods = Int(length(optimal_mitigation_adaptation_vector) / (n_regions*2))
-                    mitigation_vec = optimal_mitigation_adaptation_vector[1:(n_opt_periods*n_regions)]
-                    adaptation_vec = optimal_mitigation_adaptation_vector[(n_opt_periods*n_regions+1):end]
-                    optimal_regional_mitigation = vcat(zeros(1,n_regions), ones(59,n_regions))
-                    optimal_regional_mitigation[2:(n_opt_periods + 1), :] = reshape(mitigation_vec, (n_opt_periods, n_regions))
-                    optimal_regional_adaptation = vcat(zeros(1,n_regions), ones(59,n_regions) .* 0.5)
-                    optimal_regional_adaptation[2:(n_opt_periods + 1), :] = reshape(adaptation_vec, (n_opt_periods, n_regions))
-                    update_param!(m, :MIU, optimal_regional_mitigation)
-                    update_param!(m, :T_AD, optimal_regional_adaptation)
-                    # update_param!(m, :ADAPTFRAC, optimal_regional_adaptation)
-                    run(m)
-                    return m[:welfare, :UTILITY]
-                end
-            end
-        else
-            # Mitigation-only optimization
-            function(optimal_mitigation_vector::Array{Float64,1})
-                n_opt_periods = Int(length(optimal_mitigation_vector) / n_regions)
-                optimal_regional_mitigation = vcat(zeros(1,n_regions), ones(59,n_regions))
-                optimal_regional_mitigation[2:(n_opt_periods + 1), :] = reshape(optimal_mitigation_vector, (n_opt_periods, n_regions))
-                update_param!(m, :MIU, optimal_regional_mitigation)
+
+                # Run the model
                 run(m)
-                return m[:welfare, :UTILITY]
+
+                # Update cache
+                cache_x[] = copy(x)
+                cache_utility[] = m[:welfare, :UTILITY]
+                cache_cca[] = m[:emissions, :CCA][end]
+            end
+        end
+
+        # Create objective function that uses cached evaluation
+        eval_counter = Ref(0)
+        rice_objective = function(x::Array{Float64,1})
+            evaluate_model!(x)
+            eval_counter[] += 1
+            if eval_counter[] % 500 == 1
+                println("Eval $(eval_counter[]): Utility = $(cache_utility[]), CCA = $(cache_cca[])")
+            end
+            return cache_utility[]
+        end
+
+        # Create constraint function if cbudget is provided
+        if cbudget !== nothing
+            rice_constraint = function(x::Array{Float64,1}, grad::Vector{Float64})
+                evaluate_model!(x)
+                # NLopt expects constraint of form f(x) <= 0
+                constraint_value = cache_cca[] - cbudget
+                return constraint_value  # Should be <= 0 (satisfied if CCA <= budget)
             end
         end
     end
-    # Return the newly created objective function and the specific instance of RICE.
-    return rice_objective, m, n_regions
+
+    # Return the objective function, constraint function (or nothing), and the specific instance of RICE.
+    return rice_objective, rice_constraint, m, n_regions
 end
 
 
@@ -178,14 +208,14 @@ end
 #----------------------------------------------------------------------------------------------------------------------
 
 
-function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_time::Int, tolerance::Float64, backstop_prices::Array{Float64,2}; run_utilitarian::Bool=true, ρ::Float64=0.008, η::Float64=1.5, remove_negishi::Bool=true, add_ad::Bool=false, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing)
+function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_time::Int, tolerance::Float64, backstop_prices::Array{Float64,2}; run_utilitarian::Bool=true, ρ::Float64=0.008, η::Float64=1.5, remove_negishi::Bool=true, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing)
 
     # -------------------------------------------------------------
     # Create objective function and values needed for optimization.
     #--------------------------------------------------------------
 
-    # Create objective function and instance of RICE, given user settings.
-    objective_function, optimal_model, n_regions = construct_rice_objective(run_utilitarian, ρ, η, backstop_prices, remove_negishi, add_ad, opt_ad, stock_ad, cbudget)
+    # Create objective function, constraint function, and instance of RICE, given user settings.
+    objective_function, constraint_function, optimal_model, n_regions = construct_rice_objective(run_utilitarian, ρ, η, backstop_prices, remove_negishi, opt_ad, stock_ad, cbudget)
 
     # Set number of optimzation objectives (will differ between cost-minimization and utilitarian approaches).
     if run_utilitarian == false
@@ -200,20 +230,25 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
             if stock_ad == true
                 # Number of objectives is equal to time periods being optimizer × n_regions regions × 3 (mitigation + flow adaptation + stock adaptation).
                 n_objectives = n_opt_periods * n_regions * 3
-                # Upper bound is 1.0 for mitigation, 2.0 for flow adaptation, 0.1 for stock adaptation. 
+                # Upper bound is 1.0 for mitigation, 2.0 for flow adaptation, 2.0 for stock adaptation.
                 upper_bound = vcat(ones(n_opt_periods*n_regions), ones(n_opt_periods*n_regions) .* 2.0, ones(n_opt_periods*n_regions) .* 2.0)
+                starting_point = vcat(ones(n_opt_periods*n_regions) .* 0.9,
+                                     ones(n_opt_periods*n_regions) .* 0.15,
+                                     ones(n_opt_periods*n_regions) .* 0.15)
             else
                 # Number of objectives is equal to time periods being optimizer × n_regions regions × 2 (mitigation + adaptation).
                 n_objectives = n_opt_periods * n_regions * 2
-                # Upper bound is 1.0 for mitigation, 2.0 for adaptation.
-                upper_bound = vcat(ones(n_opt_periods*n_regions), ones(n_opt_periods*n_regions) .* 2.0)
+                # Upper bound is 1.0 for mitigation, 2.0 for adaptation (rescaled in constraint).
+                upper_bound = vcat(ones(n_opt_periods*n_regions), ones(n_opt_periods*n_regions) .* 1.0)
+                starting_point = vcat(ones(n_opt_periods*n_regions) .* 0.9,
+                                     ones(n_opt_periods*n_regions) .* 0.1)
             end
         else
             n_objectives = n_opt_periods * n_regions
             upper_bound = ones(n_objectives)
+            starting_point = ones(n_objectives) .* 0.9
         end
         lower_bound = zeros(n_objectives)
-        starting_point = upper_bound/4
     end
 
     # -------------------------------------------------------
@@ -227,6 +262,12 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
 
     # Assign the objective function to maximize.
     max_objective!(opt, (x, grad) -> objective_function(x))
+
+    # Add carbon budget constraint if provided
+    if constraint_function !== nothing
+        # Constraint tolerance: 0.1 GtC
+        inequality_constraint!(opt, constraint_function, 1e-1) # or equality
+    end
 
     # Set termination time.
     maxtime!(opt, stop_time)
