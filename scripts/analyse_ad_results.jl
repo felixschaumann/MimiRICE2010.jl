@@ -62,7 +62,7 @@ combined_emissions[!, :var_ad_Change] = (combined_emissions.var_ad_cum_em_share 
 #%% make bar chart of percentage change in emissions share
 
 stock_ad = true
-constrained = false
+constrained = true
 
 fig, ax = PythonPlot.subplots(1, 1, figsize=(8, 4), sharex=true)
 

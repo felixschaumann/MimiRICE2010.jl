@@ -59,7 +59,7 @@ results_folder = "MyResults"
 n_opt_periods = 30
 
 # Optimization algorithm (the type should be a Symbol, e.g. :LN_SBPLX). See options at http://ab-initio.mit.edu/wiki/index.php/NLopt_Algorithms
-optimization_algorithm = :LN_COBYLA # :LN_SBPLX
+optimization_algorithm = :LN_AUGLAG #:LN_COBYLA # :LN_SBPLX
 
 # Maximum time in seconds to run each model (NOTE: FUND takes much longer to optimize than RICE).
 stop_time_rice = 7200
@@ -134,7 +134,7 @@ if opt_ad == true
 end
 
 carbon_budget = 1022.5950757761052 # 921.0
-cost_cap = 0.1 # 0.005 # 0.003
+cost_cap = 0.009 # 0.01 # 0.005 # 0.003
 
 # Load external starting points if available (set to nothing to use defaults)
 use_ext_starting_points = true

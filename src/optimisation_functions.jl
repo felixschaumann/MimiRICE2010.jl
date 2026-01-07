@@ -286,6 +286,21 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
     lower_bounds!(opt, lower_bound)
     upper_bounds!(opt, upper_bound)
 
+    # Special handling for AUGLAG (meta-algorithm that wraps another optimizer)
+    if optimization_algorithm == :LN_AUGLAG || optimization_algorithm == :LD_AUGLAG
+        # Create subsidiary optimizer (SBPLX for derivative-free, or another for gradient-based)
+        local_opt = Opt(:LN_SBPLX, n_objectives)
+        lower_bounds!(local_opt, lower_bound)
+        upper_bounds!(local_opt, upper_bound)
+        ftol_rel!(local_opt, tolerance * 100)  # Slightly looser for sub-problems (10 originally)
+        maxtime!(local_opt, stop_time ÷ 200)   # Limit each sub-optimization (20 originally)
+        maxeval!(local_opt, 5000)                     # Limit number of evaluations per sub-optimization
+
+        # Set it as the local optimizer for AUGLAG
+        local_optimizer!(opt, local_opt)
+        println("Using AUGLAG with SBPLX subsidiary optimizer")
+    end
+
     # Assign the objective function to maximize.
     max_objective!(opt, (x, grad) -> objective_function(x))
 
@@ -297,8 +312,8 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
 
     # Add cost cap constraint if provided
     if cost_constraint_function !== nothing
-        # Constraint tolerance: 0.00001 (0.001% of GDP tolerance)
-        inequality_constraint!(opt, cost_constraint_function, 1e-5)
+        # Constraint tolerance: 0.0001 (0.01% of GDP tolerance)
+        inequality_constraint!(opt, cost_constraint_function, 1e-4)
     end
 
     # Set termination time.
