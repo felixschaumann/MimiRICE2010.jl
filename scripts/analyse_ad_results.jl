@@ -62,6 +62,7 @@ combined_emissions[!, :var_ad_Change] = (combined_emissions.var_ad_cum_em_share 
 #%% make bar chart of percentage change in emissions share
 
 stock_ad = true
+constrained = false
 
 fig, ax = PythonPlot.subplots(1, 1, figsize=(8, 4), sharex=true)
 
@@ -69,7 +70,7 @@ ETHBlue = (33/255, 92/255, 175/255)
 
 ax.bar(0:1, stock_ad ? combined_emissions.stock_ad_Change : combined_emissions.var_ad_Change, color=ETHBlue, clip_on=false)
 
-ax.set_title("Stock & flow adaptation as a decision variable - constrained climate investment", weight="bold")
+ax.set_title("$(stock_ad ? "Stock & flow adaptation" : "Flow adaptation") as a decision variable - $(constrained ? "constrained" : "unconstrained") climate investment", weight="bold")
 ax.set_ylabel("Change in cumulative emissions share by region (%)")
 ax.set_xlabel("RICE2010 Region")
 ax.spines["right"].set_visible(false)
@@ -96,5 +97,5 @@ end
 ax.set_xticks(0:1, region_labels)
 
 fig.tight_layout()
-fig.savefig("../cum_em_change_$(stock_ad ? "stock_ad" : "var_ad")_constrained.png", bbox_inches="tight")
+fig.savefig("../cum_em_change_$(stock_ad ? "stock_ad" : "var_ad")_$(constrained ? "constrained" : "unconstrained").png", bbox_inches="tight")
 fig

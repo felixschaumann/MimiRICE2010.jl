@@ -64,7 +64,7 @@ end
 #       m:                  An instance of RICE2010 consistent with user model settings.
 #----------------------------------------------------------------------------------------------------------------------
 
-function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float64, backstop_prices::Array{Float64,2}, remove_negishi::Bool, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing)
+function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float64, backstop_prices::Array{Float64,2}, remove_negishi::Bool, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing, cost_cap=nothing)
 
     # Get an instance of RICE given user settings.
     m = create_rice(ρ, η, remove_negishi, opt_ad, stock_ad, cbudget)
@@ -77,6 +77,7 @@ function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float6
 
     rice_objective = nothing
     rice_constraint = nothing
+    rice_cost_constraint = nothing
 
     if run_utilitarian == false
 
@@ -96,6 +97,7 @@ function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float6
         cache_x = Ref{Union{Nothing, Vector{Float64}}}(nothing)
         cache_utility = Ref(0.0)
         cache_cca = Ref(0.0)
+        cache_max_cost = Ref(0.0)  # Maximum TOTAL_COST across all (time, region)
 
         # Shared evaluation function that updates cache if needed
         function evaluate_model!(x::Array{Float64,1})
@@ -145,6 +147,11 @@ function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float6
                 cache_x[] = copy(x)
                 cache_utility[] = m[:welfare, :UTILITY]
                 cache_cca[] = m[:emissions, :CCA][end]
+
+                # Cache max cost across all (time, region) if adaptation is enabled
+                if opt_ad
+                    cache_max_cost[] = maximum(m[:neteconomy, :TOTAL_COST])
+                end
             end
         end
 
@@ -154,12 +161,12 @@ function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float6
             evaluate_model!(x)
             eval_counter[] += 1
             if eval_counter[] % 500 == 1
-                println("Eval $(eval_counter[]): Utility = $(cache_utility[]), CCA = $(cache_cca[])")
+                println("Eval $(eval_counter[]): Utility = $(cache_utility[]), CCA = $(cache_cca[]), Max Cost = $(cache_max_cost[])")
             end
             return cache_utility[]
         end
 
-        # Create constraint function if cbudget is provided
+        # Create carbon budget constraint function if cbudget is provided
         if cbudget !== nothing
             rice_constraint = function(x::Array{Float64,1}, grad::Vector{Float64})
                 evaluate_model!(x)
@@ -168,10 +175,21 @@ function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float6
                 return constraint_value  # Should be <= 0 (satisfied if CCA <= budget)
             end
         end
+
+        # Create cost cap constraint function if cost_cap is provided
+        if cost_cap !== nothing && opt_ad
+            rice_cost_constraint = function(x::Array{Float64,1}, grad::Vector{Float64})
+                evaluate_model!(x)
+                # NLopt expects constraint of form f(x) <= 0
+                # max(TOTAL_COST) - cost_cap <= 0 means no (t,r) exceeds cost_cap
+                constraint_value = cache_max_cost[] - cost_cap
+                return constraint_value  # Should be <= 0 (satisfied if max cost <= cap)
+            end
+        end
     end
 
-    # Return the objective function, constraint function (or nothing), and the specific instance of RICE.
-    return rice_objective, rice_constraint, m, n_regions
+    # Return the objective function, constraint functions (or nothing), and the specific instance of RICE.
+    return rice_objective, rice_constraint, rice_cost_constraint, m, n_regions
 end
 
 
@@ -208,14 +226,14 @@ end
 #----------------------------------------------------------------------------------------------------------------------
 
 
-function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_time::Int, tolerance::Float64, backstop_prices::Array{Float64,2}; run_utilitarian::Bool=true, ρ::Float64=0.008, η::Float64=1.5, remove_negishi::Bool=true, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing)
+function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_time::Int, tolerance::Float64, backstop_prices::Array{Float64,2}; run_utilitarian::Bool=true, ρ::Float64=0.008, η::Float64=1.5, remove_negishi::Bool=true, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing, cost_cap=nothing, ext_starting_points=nothing)
 
     # -------------------------------------------------------------
     # Create objective function and values needed for optimization.
     #--------------------------------------------------------------
 
-    # Create objective function, constraint function, and instance of RICE, given user settings.
-    objective_function, constraint_function, optimal_model, n_regions = construct_rice_objective(run_utilitarian, ρ, η, backstop_prices, remove_negishi, opt_ad, stock_ad, cbudget)
+    # Create objective function, constraint functions, and instance of RICE, given user settings.
+    objective_function, constraint_function, cost_constraint_function, optimal_model, n_regions = construct_rice_objective(run_utilitarian, ρ, η, backstop_prices, remove_negishi, opt_ad, stock_ad, cbudget, cost_cap)
 
     # Set number of optimzation objectives (will differ between cost-minimization and utilitarian approaches).
     if run_utilitarian == false
@@ -232,9 +250,17 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
                 n_objectives = n_opt_periods * n_regions * 3
                 # Upper bound is 1.0 for mitigation, 2.0 for flow adaptation, 2.0 for stock adaptation.
                 upper_bound = vcat(ones(n_opt_periods*n_regions), ones(n_opt_periods*n_regions) .* 2.0, ones(n_opt_periods*n_regions) .* 2.0)
-                starting_point = vcat(ones(n_opt_periods*n_regions) .* 0.9,
-                                     ones(n_opt_periods*n_regions) .* 0.15,
-                                     ones(n_opt_periods*n_regions) .* 0.15)
+
+                if ext_starting_points !== nothing
+                    # Use external starting points (should be a vector of length n_objectives)
+                    starting_point = ext_starting_points
+                    println("Using external starting points (length=$(length(starting_point)))")
+                else
+                    # Default starting points
+                    starting_point = vcat(ones(n_opt_periods*n_regions) .* 0.9,
+                                         ones(n_opt_periods*n_regions) .* 0.15,
+                                         ones(n_opt_periods*n_regions) .* 0.15)
+                end
             else
                 # Number of objectives is equal to time periods being optimizer × n_regions regions × 2 (mitigation + adaptation).
                 n_objectives = n_opt_periods * n_regions * 2
@@ -266,7 +292,13 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
     # Add carbon budget constraint if provided
     if constraint_function !== nothing
         # Constraint tolerance: 0.1 GtC
-        inequality_constraint!(opt, constraint_function, 1e-1) # or equality
+        inequality_constraint!(opt, constraint_function, 1e-1)
+    end
+
+    # Add cost cap constraint if provided
+    if cost_constraint_function !== nothing
+        # Constraint tolerance: 0.00001 (0.001% of GDP tolerance)
+        inequality_constraint!(opt, cost_constraint_function, 1e-5)
     end
 
     # Set termination time.

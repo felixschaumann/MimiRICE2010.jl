@@ -133,15 +133,58 @@ if opt_ad == true
     end
 end
 
-carbon_budget =  921.0 # 1021.0
+carbon_budget = 1022.5950757761052 # 921.0
+cost_cap = 0.1 # 0.005 # 0.003
+
+# Load external starting points if available (set to nothing to use defaults)
+use_ext_starting_points = true
+ext_starting_points = nothing
+
+if use_ext_starting_points
+    starting_points_dir = joinpath(@__DIR__, "../", "results", results_folder, "$(ad_string)rice_utilitarian"*(remove_negishi ? "_no_negishi" : ""), "StartingPoints")
+
+    if isdir(starting_points_dir)
+        println("Loading starting points from: $starting_points_dir")
+
+        # Load mitigation starting points (rows 2:n_opt_periods+1, all columns)
+        mit_df = DataFrame(load(joinpath(starting_points_dir, "opt_mitigation_rice_utilitarian.csv")))
+        mit_matrix = Matrix(mit_df)[2:(n_opt_periods+1), :]
+        mit_vec = vec(mit_matrix)  # Flatten column-major
+
+        if opt_ad && stock_ad
+            # Load flow and stock adaptation
+            flow_df = DataFrame(load(joinpath(starting_points_dir, "opt_flow_adaptation_rice_utilitarian.csv")))
+            flow_matrix = Matrix(flow_df)[2:(n_opt_periods+1), :]
+            flow_vec = vec(flow_matrix)
+
+            stock_df = DataFrame(load(joinpath(starting_points_dir, "opt_stock_adaptation_rice_utilitarian.csv")))
+            stock_matrix = Matrix(stock_df)[2:(n_opt_periods+1), :]
+            stock_vec = vec(stock_matrix)
+
+            ext_starting_points = vcat(mit_vec, flow_vec, stock_vec)
+        elseif opt_ad
+            # Load flow adaptation only
+            flow_df = DataFrame(load(joinpath(starting_points_dir, "opt_flow_adaptation_rice_utilitarian.csv")))
+            flow_matrix = Matrix(flow_df)[2:(n_opt_periods+1), :]
+            flow_vec = vec(flow_matrix)
+
+            ext_starting_points = vcat(mit_vec, flow_vec)
+        else
+            ext_starting_points = mit_vec
+        end
+
+        println("Loaded starting points vector of length $(length(ext_starting_points))")
+    else
+        println("Starting points directory not found, using defaults")
+    end
+end
 
 if rice_utilitarian == true
 
     println("Starting $(ad_string)RICE utilitarian optimization...")
 
-    # stop_time_rice originally 500
     # Optimize model.
-    @time opt_output_rice_utilitarian, opt_emissions_rice_utilitarian, opt_mitigation_rice_utilitarian, opt_flow_adaptation_rice_utilitarian, opt_stock_adaptation_rice_utilitarian, opt_tax_rice_utilitarian, opt_model_rice_utilitarian, convergence_rice_utilitarian = optimize_rice(optimization_algorithm, n_opt_periods, stop_time_rice, tolerance_rice, backstop_prices, run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi, opt_ad=opt_ad, stock_ad=stock_ad, cbudget=carbon_budget)
+    @time opt_output_rice_utilitarian, opt_emissions_rice_utilitarian, opt_mitigation_rice_utilitarian, opt_flow_adaptation_rice_utilitarian, opt_stock_adaptation_rice_utilitarian, opt_tax_rice_utilitarian, opt_model_rice_utilitarian, convergence_rice_utilitarian = optimize_rice(optimization_algorithm, n_opt_periods, stop_time_rice, tolerance_rice, backstop_prices, run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi, opt_ad=opt_ad, stock_ad=stock_ad, cbudget=carbon_budget, cost_cap=cost_cap, ext_starting_points=ext_starting_points)
 
     # Create folder to store some key results.
     output_directory = joinpath(@__DIR__, "../", "results", results_folder, "$(ad_string)rice_utilitarian"*(remove_negishi ? "_no_negishi" : ""))
@@ -171,3 +214,14 @@ end
 # End of Analysis.
 #------------------------------------------------------------------------------------------------------
 println("Analysis complete.")  
+
+#%%
+
+# write optimised chioce variables to file as starting points for future runs
+CSV.write(joinpath(@__DIR__, "../", "results", results_folder, "$(ad_string)rice_utilitarian"*(remove_negishi ? "_no_negishi" : ""), "StartingPoints", "opt_mitigation_rice_utilitarian.csv"), DataFrame(opt_mitigation_rice_utilitarian, :auto))
+if opt_ad == true
+    CSV.write(joinpath(@__DIR__, "../", "results", results_folder, "$(ad_string)rice_utilitarian"*(remove_negishi ? "_no_negishi" : ""), "StartingPoints", "opt_flow_adaptation_rice_utilitarian.csv"), DataFrame(opt_flow_adaptation_rice_utilitarian, :auto))
+    if stock_ad == true
+        CSV.write(joinpath(@__DIR__, "../", "results", results_folder, "$(ad_string)rice_utilitarian"*(remove_negishi ? "_no_negishi" : ""), "StartingPoints", "opt_stock_adaptation_rice_utilitarian.csv"), DataFrame(opt_stock_adaptation_rice_utilitarian, :auto))
+    end
+end
