@@ -7,6 +7,8 @@
     C = Variable(index=[time, regions]) # Consumption (trillions 2005 US dollars per year)
     CPC = Variable(index=[time, regions]) # Per capita consumption (thousands 2005 USD per year)
     ADAPTCOST = Parameter(index=[time, regions]) # Cost of adaptation (trillions 2005 USD per year)
+    ABATECOST_FRAC = Variable(index=[time, regions]) # Abatement cost as fraction of YGROSS
+    ADAPTCOST_FRAC = Variable(index=[time, regions]) # Adaptation cost as fraction of YGROSS
     TOTAL_COST = Variable(index=[time, regions]) # Total cost of abatement and adaptation as fraction of YGROSS
     
     YGROSS = Parameter(index=[time, regions]) # Gross world product GROSS of abatement and damages (trillions 2005 USD per year)
@@ -41,7 +43,9 @@
 
         #Calculate cost constraint penalty
         for r in d.regions
-            v.TOTAL_COST[t,r] = (p.ABATECOST[t,r] + p.ADAPTCOST[t,r]) / p.YGROSS[t,r]
+            v.ABATECOST_FRAC[t, r] = p.ABATECOST[t,r] / p.YGROSS[t,r]
+            v.ADAPTCOST_FRAC[t, r] = p.ADAPTCOST[t,r] / p.YGROSS[t,r]
+            v.TOTAL_COST[t,r] = v.ABATECOST_FRAC[t, r] + v.ADAPTCOST_FRAC[t, r]
             cost_cap = p.COST_CAP_FRACTION
             excess_cost = v.TOTAL_COST[t,r] - cost_cap
 

@@ -150,7 +150,7 @@ function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float6
 
                 # Cache max cost across all (time, region) if adaptation is enabled
                 if opt_ad
-                    cache_max_cost[] = maximum(m[:neteconomy, :TOTAL_COST])
+                    cache_max_cost[] = maximum(m[:neteconomy, :TOTAL_COST][:, 2]) # apply constraint only to poor region
                 end
             end
         end
