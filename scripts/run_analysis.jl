@@ -66,7 +66,7 @@ stop_time_rice = 7200
 # stop_time_fund = 7500
 
 # Relative tolerance criteria for convergence (will stop if |Δf| / |f| < tolerance from one iteration to the next.)
-tolerance_rice = 1e-12
+tolerance_rice = 1e-15
 # tolerance_fund = 1e-10
 
 #%%
@@ -133,8 +133,8 @@ if opt_ad == true
     end
 end
 
-carbon_budget = 1022.5950757761052 # 921.0
-cost_cap = 0.0075 # 0.01 # 0.005 # 0.003
+carbon_budget = nothing #1022.5950757761052 # 921.0
+cost_cap = 0.008 # 0.01 # 0.005 # 0.003
 
 # Load external starting points if available (set to nothing to use defaults)
 use_ext_starting_points = true

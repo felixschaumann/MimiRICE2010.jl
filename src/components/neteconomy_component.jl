@@ -6,6 +6,7 @@
     I = Variable(index=[time, regions]) # Investment (trillions 2005 USD per year)
     C = Variable(index=[time, regions]) # Consumption (trillions 2005 US dollars per year)
     CPC = Variable(index=[time, regions]) # Per capita consumption (thousands 2005 USD per year)
+    TOTAL_COST = Variable(index=[time, regions]) # Total cost of abatement (and adaptation) as fraction of YGROSS
 
     YGROSS = Parameter(index=[time, regions]) # Gross world product GROSS of abatement and damages (trillions 2005 USD per year)
     DAMFRAC = Parameter(index=[time, regions]) # Damages as fraction of gross output
@@ -28,6 +29,7 @@
         #Define function for Y
         for r in d.regions
             v.Y[t,r] = v.YNET[t,r] - p.ABATECOST[t,r]
+            v.TOTAL_COST[t,r] = p.ABATECOST[t,r] / p.YGROSS[t,r]
         end
 
         #Define function for I

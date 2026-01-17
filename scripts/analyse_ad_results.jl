@@ -99,3 +99,16 @@ ax.set_xticks(0:1, region_labels)
 fig.tight_layout()
 fig.savefig("../cum_em_change_$(stock_ad ? "stock_ad" : "var_ad")_$(constrained ? "constrained" : "unconstrained").png", bbox_inches="tight")
 fig
+
+#%%
+
+fig, ax = PythonPlot.subplots(1, 1, figsize=(6, 4))
+
+# plot time series of emissions for ut_emissions and stock_ad_ut_emissions for both regions
+time = collect(2015:10:2605)[1:20]
+ax.plot(time, (ut_emissions.rich .* 10)[1:20], label="Utilitarian - rich", color="blue")
+ax.plot(time, (ut_emissions.poor .* 10)[1:20], label="Utilitarian - poor", color="orange")
+ax.plot(time, (stock_ad_ut_emissions.rich .* 10)[1:20], label="Constrained mitigation - rich", color="blue", linestyle="--")
+ax.plot(time, (stock_ad_ut_emissions.poor .* 10)[1:20], label="Constrained mitigation - poor", color="orange", linestyle="--")
+
+fig

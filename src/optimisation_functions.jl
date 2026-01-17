@@ -149,9 +149,9 @@ function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float6
                 cache_cca[] = m[:emissions, :CCA][end]
 
                 # Cache max cost across all (time, region) if adaptation is enabled
-                if opt_ad
-                    cache_max_cost[] = maximum(m[:neteconomy, :TOTAL_COST][:, 2]) # apply constraint only to poor region
-                end
+                # if opt_ad
+                cache_max_cost[] = maximum(m[:neteconomy, :TOTAL_COST]) # to apply constraint only to poor region: [:, 2]
+                # end
             end
         end
 
@@ -177,7 +177,7 @@ function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float6
         end
 
         # Create cost cap constraint function if cost_cap is provided
-        if cost_cap !== nothing && opt_ad
+        if cost_cap !== nothing #&& opt_ad
             rice_cost_constraint = function(x::Array{Float64,1}, grad::Vector{Float64})
                 evaluate_model!(x)
                 # NLopt expects constraint of form f(x) <= 0
@@ -292,9 +292,9 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
         local_opt = Opt(:LN_SBPLX, n_objectives)
         lower_bounds!(local_opt, lower_bound)
         upper_bounds!(local_opt, upper_bound)
-        ftol_rel!(local_opt, tolerance * 100)  # Slightly looser for sub-problems (10 originally)
-        maxtime!(local_opt, stop_time ÷ 200)   # Limit each sub-optimization (20 originally)
-        maxeval!(local_opt, 5000)                     # Limit number of evaluations per sub-optimization
+        ftol_rel!(local_opt, tolerance * 10)  # Slightly looser for sub-problems (10 originally)
+        maxtime!(local_opt, stop_time ÷ 20)   # Limit each sub-optimization (20 originally)
+        # maxeval!(local_opt, 5000)                     # Limit number of evaluations per sub-optimization
 
         # Set it as the local optimizer for AUGLAG
         local_optimizer!(opt, local_opt)
