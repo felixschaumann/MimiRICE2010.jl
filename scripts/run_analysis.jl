@@ -15,6 +15,7 @@ using CSVFiles
 # Load required files.
 include("create_rice.jl")
 include(joinpath(@__DIR__, "../src/", "optimisation_functions.jl"))
+include(joinpath(@__DIR__, "../src/", "multistart_optimisation.jl"))
 
 #%%
 #------------------------------------------------------------------------------------------------------
@@ -68,6 +69,10 @@ stop_time_rice = 7200
 # Relative tolerance criteria for convergence (will stop if |Δf| / |f| < tolerance from one iteration to the next.)
 tolerance_rice = 1e-15
 # tolerance_fund = 1e-10
+
+# Multi-start optimization (hierarchical warm-up + structured multi-start + refinement)
+use_multistart = true
+n_multistart = 8  # number of starting points in Phase 2
 
 #%%
 #------------------------------------------------------------------------------------------------------
@@ -184,7 +189,12 @@ if rice_utilitarian == true
     println("Starting $(ad_string)RICE utilitarian optimization...")
 
     # Optimize model.
-    @time opt_output_rice_utilitarian, opt_emissions_rice_utilitarian, opt_mitigation_rice_utilitarian, opt_flow_adaptation_rice_utilitarian, opt_stock_adaptation_rice_utilitarian, opt_tax_rice_utilitarian, opt_model_rice_utilitarian, convergence_rice_utilitarian = optimize_rice(optimization_algorithm, n_opt_periods, stop_time_rice, tolerance_rice, backstop_prices, run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi, opt_ad=opt_ad, stock_ad=stock_ad, cbudget=carbon_budget, cost_cap=cost_cap, ext_starting_points=ext_starting_points)
+    if use_multistart
+        println("Using multi-start optimization with $n_multistart starts...")
+        @time opt_output_rice_utilitarian, opt_emissions_rice_utilitarian, opt_mitigation_rice_utilitarian, opt_flow_adaptation_rice_utilitarian, opt_stock_adaptation_rice_utilitarian, opt_tax_rice_utilitarian, opt_model_rice_utilitarian, convergence_rice_utilitarian = multistart_optimize_rice(n_multistart, optimization_algorithm, n_opt_periods, stop_time_rice, tolerance_rice, backstop_prices, run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi, opt_ad=opt_ad, stock_ad=stock_ad, cbudget=carbon_budget, cost_cap=cost_cap, ext_starting_points=ext_starting_points)
+    else
+        @time opt_output_rice_utilitarian, opt_emissions_rice_utilitarian, opt_mitigation_rice_utilitarian, opt_flow_adaptation_rice_utilitarian, opt_stock_adaptation_rice_utilitarian, opt_tax_rice_utilitarian, opt_model_rice_utilitarian, convergence_rice_utilitarian = optimize_rice(optimization_algorithm, n_opt_periods, stop_time_rice, tolerance_rice, backstop_prices, run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi, opt_ad=opt_ad, stock_ad=stock_ad, cbudget=carbon_budget, cost_cap=cost_cap, ext_starting_points=ext_starting_points)
+    end
 
     # Create folder to store some key results.
     output_directory = joinpath(@__DIR__, "../", "results", results_folder, "$(ad_string)rice_utilitarian"*(remove_negishi ? "_no_negishi" : ""))

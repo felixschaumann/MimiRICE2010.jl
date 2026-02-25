@@ -6,6 +6,54 @@
 
 # From https://github.com/Environment-Research/Utilitarianism/blob/master/src/helper_functions.jl
 
+
+#######################################################################################################################
+# PARSE SOLUTION VECTOR INTO FULL PARAMETER MATRICES.
+########################################################################################################################
+# Description: Reshapes a flat optimization vector into full 60×n_regions parameter matrices
+#              for mitigation, flow adaptation, and stock adaptation. Eliminates duplicated
+#              reshape logic between evaluate_model! and post-optimization parsing.
+#----------------------------------------------------------------------------------------------------------------------
+
+function parse_solution_vector(x::Vector{Float64}, n_opt_periods::Int, n_regions::Int,
+                               opt_ad::Bool, stock_ad::Bool;
+                               stock_ad_default::Float64=0.5)
+    if opt_ad
+        if stock_ad
+            mitigation_vec = x[1:(n_opt_periods*n_regions)]
+            flow_adaptation_vec = x[(n_opt_periods*n_regions+1):(n_opt_periods*n_regions*2)]
+            stock_adaptation_vec = x[(n_opt_periods*n_regions*2+1):end]
+
+            optimal_mitigation = vcat(zeros(1, n_regions), ones(59, n_regions))
+            optimal_mitigation[2:(n_opt_periods+1), :] = reshape(mitigation_vec, (n_opt_periods, n_regions))
+
+            optimal_flow_adaptation = vcat(zeros(1, n_regions), ones(59, n_regions) .* 0.5)
+            optimal_flow_adaptation[2:(n_opt_periods+1), :] = reshape(flow_adaptation_vec, (n_opt_periods, n_regions))
+
+            optimal_stock_adaptation = vcat(zeros(1, n_regions), ones(59, n_regions) .* stock_ad_default)
+            optimal_stock_adaptation[2:(n_opt_periods+1), :] = reshape(stock_adaptation_vec, (n_opt_periods, n_regions))
+
+            return optimal_mitigation, optimal_flow_adaptation, optimal_stock_adaptation
+        else
+            mitigation_vec = x[1:(n_opt_periods*n_regions)]
+            adaptation_vec = x[(n_opt_periods*n_regions+1):end]
+
+            optimal_mitigation = vcat(zeros(1, n_regions), ones(59, n_regions))
+            optimal_mitigation[2:(n_opt_periods+1), :] = reshape(mitigation_vec, (n_opt_periods, n_regions))
+
+            optimal_flow_adaptation = vcat(zeros(1, n_regions), ones(59, n_regions) .* 0.5)
+            optimal_flow_adaptation[2:(n_opt_periods+1), :] = reshape(adaptation_vec, (n_opt_periods, n_regions))
+
+            return optimal_mitigation, optimal_flow_adaptation, nothing
+        end
+    else
+        optimal_mitigation = vcat(zeros(1, n_regions), ones(59, n_regions))
+        optimal_mitigation[2:(n_opt_periods+1), :] = reshape(x, (n_opt_periods, n_regions))
+
+        return optimal_mitigation, nothing, nothing
+    end
+end
+
 #######################################################################################################################
 # CALCULATE REGIONAL CO₂ MITIGATION.
 ########################################################################################################################
@@ -103,41 +151,17 @@ function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float6
         function evaluate_model!(x::Array{Float64,1})
             # Check if we need to run the model (x has changed)
             if cache_x[] === nothing || cache_x[] != x
-                # Parse and update model parameters based on optimization type
-                if opt_ad == true
-                    if stock_ad == true
-                        # Joint mitigation and (flow and stock) adaptation optimization
-                        n_opt_periods = Int(length(x) / (n_regions*3))
-                        mitigation_vec = x[1:(n_opt_periods*n_regions)]
-                        flow_adaptation_vec = x[(n_opt_periods*n_regions+1):(n_opt_periods*n_regions*2)]
-                        stock_adaptation_vec = x[(n_opt_periods*n_regions*2+1):end]
-                        optimal_regional_mitigation = vcat(zeros(1,n_regions), ones(59,n_regions))
-                        optimal_regional_mitigation[2:(n_opt_periods + 1), :] = reshape(mitigation_vec, (n_opt_periods, n_regions))
-                        optimal_regional_flow_adaptation = vcat(zeros(1,n_regions), ones(59,n_regions) .* 0.5)
-                        optimal_regional_flow_adaptation[2:(n_opt_periods + 1), :] = reshape(flow_adaptation_vec, (n_opt_periods, n_regions))
-                        optimal_regional_stock_adaptation = vcat(zeros(1,n_regions), ones(59,n_regions) .* 0.25)
-                        optimal_regional_stock_adaptation[2:(n_opt_periods + 1), :] = reshape(stock_adaptation_vec, (n_opt_periods, n_regions))
-                        update_param!(m, :MIU, optimal_regional_mitigation)
-                        update_param!(m, :T_AD_FLOW, optimal_regional_flow_adaptation)
-                        update_param!(m, :I_AD, optimal_regional_stock_adaptation)
-                    else
-                        # Joint mitigation and adaptation optimization
-                        n_opt_periods = Int(length(x) / (n_regions*2))
-                        mitigation_vec = x[1:(n_opt_periods*n_regions)]
-                        adaptation_vec = x[(n_opt_periods*n_regions+1):end]
-                        optimal_regional_mitigation = vcat(zeros(1,n_regions), ones(59,n_regions))
-                        optimal_regional_mitigation[2:(n_opt_periods + 1), :] = reshape(mitigation_vec, (n_opt_periods, n_regions))
-                        optimal_regional_adaptation = vcat(zeros(1,n_regions), ones(59,n_regions) .* 0.5)
-                        optimal_regional_adaptation[2:(n_opt_periods + 1), :] = reshape(adaptation_vec, (n_opt_periods, n_regions))
-                        update_param!(m, :MIU, optimal_regional_mitigation)
-                        update_param!(m, :T_AD, 2 .* optimal_regional_adaptation)
-                    end
-                else
-                    # Mitigation-only optimization
-                    n_opt_periods = Int(length(x) / n_regions)
-                    optimal_regional_mitigation = vcat(zeros(1,n_regions), ones(59,n_regions))
-                    optimal_regional_mitigation[2:(n_opt_periods + 1), :] = reshape(x, (n_opt_periods, n_regions))
-                    update_param!(m, :MIU, optimal_regional_mitigation)
+                # Parse solution vector into full parameter matrices
+                n_controls = opt_ad ? (stock_ad ? 3 : 2) : 1
+                n_opt_periods = Int(length(x) / (n_regions * n_controls))
+                optimal_regional_mitigation, optimal_regional_flow_adaptation, optimal_regional_stock_adaptation = parse_solution_vector(x, n_opt_periods, n_regions, opt_ad, stock_ad; stock_ad_default=0.25)
+
+                update_param!(m, :MIU, optimal_regional_mitigation)
+                if opt_ad && stock_ad
+                    update_param!(m, :T_AD_FLOW, optimal_regional_flow_adaptation)
+                    update_param!(m, :I_AD, optimal_regional_stock_adaptation)
+                elseif opt_ad
+                    update_param!(m, :T_AD, 2 .* optimal_regional_flow_adaptation)
                 end
 
                 # Run the model
@@ -325,40 +349,13 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
     # Optimize model.
     maximum_objective_value, optimized_policy_vector, convergence_result = optimize(opt, starting_point)
 
-    # Create optimal decarbonization rates and adaptation for all time periods (approach to do so will differ between cost-minimization and utilitarian).
+    # Create optimal decarbonization rates and adaptation for all time periods.
     if run_utilitarian == false
         optimal_mitigation = mitigation_from_tax(optimized_policy_vector, backstop_prices, 2.8)
         optimal_flow_adaptation = nothing
         optimal_stock_adaptation = nothing
     else
-        if opt_ad == true
-            if stock_ad == true
-                mitigation_vec = optimized_policy_vector[1:(n_opt_periods*n_regions)]
-                flow_adaptation_vec = optimized_policy_vector[(n_opt_periods*n_regions+1):(n_opt_periods*n_regions*2)]
-                stock_adaptation_vec = optimized_policy_vector[(n_opt_periods*n_regions*2+1):end]
-                optimal_mitigation = vcat(zeros(1,n_regions), ones(59,n_regions))
-                optimal_mitigation[2:(n_opt_periods+1), :] = reshape(mitigation_vec, (n_opt_periods, n_regions))
-                optimal_flow_adaptation = vcat(zeros(1,n_regions), ones(59,n_regions) .* 0.5)
-                optimal_flow_adaptation[2:(n_opt_periods+1), :] = reshape(flow_adaptation_vec, (n_opt_periods, n_regions))
-                optimal_stock_adaptation = vcat(zeros(1,n_regions), ones(59,n_regions) .* 0.5)
-                optimal_stock_adaptation[2:(n_opt_periods+1), :] = reshape(stock_adaptation_vec, (n_opt_periods, n_regions))
-            else
-                mitigation_vec = optimized_policy_vector[1:(n_opt_periods*n_regions)]
-                adaptation_vec = optimized_policy_vector[(n_opt_periods*n_regions+1):end]
-                optimal_mitigation = vcat(zeros(1,n_regions), ones(59,n_regions))
-                optimal_mitigation[2:(n_opt_periods+1), :] = reshape(mitigation_vec, (n_opt_periods, n_regions))
-                optimal_adaptation = vcat(zeros(1,n_regions), ones(59,n_regions) .* 0.5)
-                optimal_adaptation[2:(n_opt_periods+1), :] = reshape(adaptation_vec, (n_opt_periods, n_regions))
-                optimal_flow_adaptation = optimal_adaptation
-                optimal_stock_adaptation = nothing
-            end
-        else
-            mitigation_vec = optimized_policy_vector
-            optimal_mitigation = vcat(zeros(1,n_regions), ones(59,n_regions))
-            optimal_mitigation[2:(n_opt_periods+1), :] = reshape(mitigation_vec, (n_opt_periods, n_regions))
-            optimal_flow_adaptation = nothing
-            optimal_stock_adaptation = nothing
-        end
+        optimal_mitigation, optimal_flow_adaptation, optimal_stock_adaptation = parse_solution_vector(optimized_policy_vector, n_opt_periods, n_regions, opt_ad, stock_ad)
     end
 
     # Run user-specified version of RICE with optimal mitigation and adaptation policy.
@@ -368,8 +365,7 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
             update_param!(optimal_model, :T_AD_FLOW, optimal_flow_adaptation)
             update_param!(optimal_model, :I_AD, optimal_stock_adaptation)
         else
-            update_param!(optimal_model, :T_AD, optimal_adaptation)
-            # update_param!(optimal_model, :ADAPTFRAC, optimal_adaptation)
+            update_param!(optimal_model, :T_AD, 2 .* optimal_flow_adaptation)
         end
     end
     run(optimal_model)
@@ -385,6 +381,6 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
     # Create optimal industiral emissions for all time periods.
     optimal_emissions = optimal_model[:emissions, :EIND]
 
-    # Return results of optimization, optimal emissions, optimal mitigation rates, optimal adaptation, optimal taxes, and RICE run with optimal mitigation/adaptation policies.
-    return optimized_policy_vector, optimal_emissions, optimal_mitigation, optimal_flow_adaptation, optimal_stock_adaptation, optimal_tax, optimal_model, convergence_result
+    # Return results including utility value for multi-start comparison.
+    return optimized_policy_vector, optimal_emissions, optimal_mitigation, optimal_flow_adaptation, optimal_stock_adaptation, optimal_tax, optimal_model, convergence_result, maximum_objective_value
 end

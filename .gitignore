@@ -5,3 +5,5 @@ results/*
 */.CondaPkg/*
 */Manifest.toml
 .DS_Store
+CLAUDE.md
+.claude/
