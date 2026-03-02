@@ -172,22 +172,47 @@ function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float6
                 cache_utility[] = m[:welfare, :UTILITY]
                 cache_cca[] = m[:emissions, :CCA][end]
 
-                # Cache max cost across all (time, region) if adaptation is enabled
-                # if opt_ad
-                cache_max_cost[] = maximum(m[:neteconomy, :TOTAL_COST]) # to apply constraint only to poor region: [:, 2]
-                # end
+                # Cache max cost across all (time, region)
+                # Note: log-sum-exp smooth max was tried here but introduces massive bias
+                # when most costs are near zero (bias ≈ log(n_elements)/α ≈ 0.01, larger than typical max cost).
+                # Plain maximum() works fine with SBPLX (designed for non-smooth functions).
+                cache_max_cost[] = maximum(m[:neteconomy, :TOTAL_COST])
             end
         end
 
-        # Create objective function that uses cached evaluation
+        # Create objective function that uses cached evaluation.
+        # Include a fixed quadratic penalty for constraint violations directly in the objective.
+        # This supplements AUGLAG's constraint handling which struggles with derivative-free solvers.
+        # Penalty is calibrated to the utility scale: for a 20% cost cap violation, the penalty
+        # should be comparable to the utility gap between constrained and unconstrained optima (~15 units).
+        # With penalty_weight=500 and relative_violation=0.2: penalty = 500*0.04 = 20 ✓
         eval_counter = Ref(0)
         rice_objective = function(x::Array{Float64,1})
             evaluate_model!(x)
             eval_counter[] += 1
-            if eval_counter[] % 500 == 1
-                println("Eval $(eval_counter[]): Utility = $(cache_utility[]), CCA = $(cache_cca[]), Max Cost = $(cache_max_cost[])")
+
+            obj_penalty = 0.0
+            if cost_cap !== nothing
+                cost_violation = max(0.0, cache_max_cost[] - cost_cap)
+                if cost_violation > 1e-6
+                    rel_violation = cost_violation / cost_cap
+                    obj_penalty += 500.0 * rel_violation^2
+                end
             end
-            return cache_utility[]
+
+            if cbudget !== nothing
+                cca_violation = max(0.0, cache_cca[] - cbudget)
+                if cca_violation > 0.1
+                    rel_cca_violation = cca_violation / cbudget
+                    obj_penalty += 500.0 * rel_cca_violation^2
+                end
+            end
+
+            if eval_counter[] % 500 == 1
+                println("Eval $(eval_counter[]): Utility = $(cache_utility[]), CCA = $(cache_cca[]), Max Cost = $(cache_max_cost[]), Penalty = $(round(obj_penalty, sigdigits=4))")
+                flush(stdout)
+            end
+            return cache_utility[] - obj_penalty
         end
 
         # Create carbon budget constraint function if cbudget is provided
@@ -312,32 +337,52 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
 
     # Special handling for AUGLAG (meta-algorithm that wraps another optimizer)
     if optimization_algorithm == :LN_AUGLAG || optimization_algorithm == :LD_AUGLAG
-        # Create subsidiary optimizer (SBPLX for derivative-free, or another for gradient-based)
+        # Create subsidiary optimizer (SBPLX for derivative-free)
         local_opt = Opt(:LN_SBPLX, n_objectives)
         lower_bounds!(local_opt, lower_bound)
         upper_bounds!(local_opt, upper_bound)
-        ftol_rel!(local_opt, tolerance * 10)  # Slightly looser for sub-problems (10 originally)
-        maxtime!(local_opt, stop_time ÷ 20)   # Limit each sub-optimization (20 originally)
-        # maxeval!(local_opt, 5000)                     # Limit number of evaluations per sub-optimization
+        # Key insight: AUGLAG needs MANY outer iterations to enforce constraints.
+        # Short, achievable sub-problems → more outer iterations → better constraint handling.
+        ftol_rel!(local_opt, 1e-8)                       # Achievable tolerance (was 1e-14, never converged)
+        maxtime!(local_opt, max(30, stop_time ÷ 100))    # Short sub-iterations (was stop_time/20)
+        maxeval!(local_opt, 3000)                         # Prevent runaway sub-problems
 
-        # Set it as the local optimizer for AUGLAG
+        # Set initial step sizes appropriate for each variable type
+        # Larger steps for far-future periods (less sensitive), smaller for near-term
+        if run_utilitarian && opt_ad
+            time_weight = [1.0 + (t - 1) / (n_opt_periods - 1) for t in 1:n_opt_periods]
+            region_time_weight = repeat(time_weight, n_regions)
+            if stock_ad
+                istep = vcat(
+                    region_time_weight .* 0.05,   # Mitigation: 0.05-0.10 (range [0,1])
+                    region_time_weight .* 0.10,   # Flow adaptation: 0.10-0.20 (range [0,2])
+                    region_time_weight .* 0.10    # Stock adaptation: 0.10-0.20 (range [0,2])
+                )
+            else
+                istep = vcat(
+                    region_time_weight .* 0.05,
+                    region_time_weight .* 0.10
+                )
+            end
+            initial_step!(local_opt, istep)
+        end
+
         local_optimizer!(opt, local_opt)
-        println("Using AUGLAG with SBPLX subsidiary optimizer")
+        sub_maxtime = max(30, stop_time ÷ 100)
+        println("Using AUGLAG with SBPLX subsidiary (sub_ftol=1e-8, sub_time=$(sub_maxtime)s, sub_eval=3000)")
     end
 
     # Assign the objective function to maximize.
     max_objective!(opt, (x, grad) -> objective_function(x))
 
-    # Add carbon budget constraint if provided
-    if constraint_function !== nothing
-        # Constraint tolerance: 0.1 GtC
-        inequality_constraint!(opt, constraint_function, 1e-1)
-    end
-
-    # Add cost cap constraint if provided
-    if cost_constraint_function !== nothing
-        # Constraint tolerance: 0.0001 (0.01% of GDP tolerance)
-        inequality_constraint!(opt, cost_constraint_function, 1e-4)
+    # Add NLopt inequality constraints only for algorithms that support them (AUGLAG, COBYLA)
+    if optimization_algorithm == :LN_AUGLAG || optimization_algorithm == :LD_AUGLAG || optimization_algorithm == :LN_COBYLA
+        if constraint_function !== nothing
+            inequality_constraint!(opt, constraint_function, 1e-1)
+        end
+        if cost_constraint_function !== nothing
+            inequality_constraint!(opt, cost_constraint_function, 1e-4)
+        end
     end
 
     # Set termination time.
@@ -355,7 +400,7 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
         optimal_flow_adaptation = nothing
         optimal_stock_adaptation = nothing
     else
-        optimal_mitigation, optimal_flow_adaptation, optimal_stock_adaptation = parse_solution_vector(optimized_policy_vector, n_opt_periods, n_regions, opt_ad, stock_ad)
+        optimal_mitigation, optimal_flow_adaptation, optimal_stock_adaptation = parse_solution_vector(optimized_policy_vector, n_opt_periods, n_regions, opt_ad, stock_ad; stock_ad_default=0.25)
     end
 
     # Run user-specified version of RICE with optimal mitigation and adaptation policy.
@@ -381,6 +426,7 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
     # Create optimal industiral emissions for all time periods.
     optimal_emissions = optimal_model[:emissions, :EIND]
 
-    # Return results including utility value for multi-start comparison.
-    return optimized_policy_vector, optimal_emissions, optimal_mitigation, optimal_flow_adaptation, optimal_stock_adaptation, optimal_tax, optimal_model, convergence_result, maximum_objective_value
+    # Return raw utility (not penalized) for multi-start comparison.
+    raw_utility = optimal_model[:welfare, :UTILITY]
+    return optimized_policy_vector, optimal_emissions, optimal_mitigation, optimal_flow_adaptation, optimal_stock_adaptation, optimal_tax, optimal_model, convergence_result, raw_utility
 end

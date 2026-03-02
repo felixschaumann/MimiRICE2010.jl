@@ -61,9 +61,10 @@ function create_rice(ρ::Float64, η::Float64, remove_negishi::Bool, opt_ad::Boo
 
         # Initialize cost constraint parameters (inactive by default)
         set_param!(m, :neteconomy, :COST_CAP_FRACTION, 0.003) # 0.3% of GDP - set to large value to effectively disable
-        # if !isa(cbudget, Float64)
-        set_param!(m, :neteconomy, :CONSTRAINT_PENALTY_STRENGTH, 0) # Set to 0 to disable constraint (10000 works well)
-        # end
+        if !isa(cbudget, Float64)
+            # Only set if not already created by the emissions block (shared model-level parameter)
+            set_param!(m, :neteconomy, :CONSTRAINT_PENALTY_STRENGTH, 0) # Set to 0 to disable constraint (10000 works well)
+        end
         
         # Set adapted temperature to a linear increase from 0.5 degrees in 2010 to 0.5 degrees in 2100. And 0.5 degrees from 2100 to 2200.
         T_AD = zeros(60, 2)

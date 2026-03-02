@@ -50,6 +50,39 @@ end
 
 
 """
+    perturb_solution(x, magnitude; lower=0.0, upper_mit=1.0, upper_ad=2.0, n_opt_periods, n_regions, stock_ad)
+
+Create a perturbed copy of a solution vector. Perturbation is proportional to
+the variable value to avoid pushing near-zero values negative.
+"""
+function perturb_solution(x::Vector{Float64}, magnitude::Float64,
+                          n_opt_periods::Int, n_regions::Int, stock_ad::Bool)
+    perturbed = copy(x)
+    n_mit = n_opt_periods * n_regions
+
+    for i in eachindex(perturbed)
+        # Determine bounds for this variable
+        if i <= n_mit
+            ub = 1.0   # mitigation
+        else
+            ub = 2.0   # adaptation
+        end
+        # Perturbation proportional to distance from bounds
+        room_up = ub - perturbed[i]
+        room_down = perturbed[i]
+        noise = magnitude * (2 * rand() - 1)
+        if noise > 0
+            perturbed[i] += noise * room_up
+        else
+            perturbed[i] += noise * room_down
+        end
+        perturbed[i] = clamp(perturbed[i], 0.0, ub)
+    end
+    return perturbed
+end
+
+
+"""
     generate_structured_starting_points(n_starts, n_opt_periods, n_regions; kwargs...)
 
 Generate diverse starting points for multi-start optimization.
@@ -66,11 +99,15 @@ function generate_structured_starting_points(n_starts::Int, n_opt_periods::Int, 
     # 1. Base solution (warm-up result from Phase 1)
     if base_solution !== nothing
         push!(starts, (copy(base_solution), "warm-up"))
+        # Perturbed variant
+        push!(starts, (perturb_solution(base_solution, 0.08, n_opt_periods, n_regions, stock_ad), "warm-up-p"))
     end
 
     # 2. External starting points (loaded from previous run)
     if ext_solution !== nothing
         push!(starts, (copy(ext_solution), "external"))
+        # Perturbed variant
+        push!(starts, (perturb_solution(ext_solution, 0.08, n_opt_periods, n_regions, stock_ad), "external-p"))
     end
 
     # 3. Default starting point (same as original optimize_rice default)
@@ -213,10 +250,10 @@ function multistart_optimize_rice(n_starts::Int, optimization_algorithm::Symbol,
 
     n_regions = 2  # 2-region aggregation
 
-    # Time allocation
-    warmup_time = total_time ÷ 6
-    per_start_time = max(60, (total_time * 2 ÷ 3) ÷ max(1, n_starts))
-    refinement_time = total_time ÷ 6
+    # Time allocation — generous refinement for tight convergence
+    warmup_time = total_time ÷ 8
+    per_start_time = max(60, (total_time * 5 ÷ 8) ÷ max(1, n_starts))
+    refinement_time = total_time ÷ 4
 
     # Collect all candidate solutions
     all_results = @NamedTuple{utility::Float64, feasible::Bool, result::Any, label::String}[]
@@ -233,7 +270,7 @@ function multistart_optimize_rice(n_starts::Int, optimization_algorithm::Symbol,
     println("Stage 1: Mitigation-only SBPLX solve ($(warmup_stage1_time)s)...")
 
     mit_result = optimize_rice(:LN_SBPLX, n_opt_periods, warmup_stage1_time,
-                               tolerance * 1000, backstop_prices;
+                               1e-8, backstop_prices;
                                run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi,
                                opt_ad=false, stock_ad=false, cbudget=nothing, cost_cap=nothing)
 
@@ -282,7 +319,7 @@ function multistart_optimize_rice(n_starts::Int, optimization_algorithm::Symbol,
         println("\nStart $i/$(length(starting_points)) ($label)...")
         try
             result = optimize_rice(optimization_algorithm, n_opt_periods, per_start_time,
-                                    tolerance * 100, backstop_prices;   # relaxed tolerance
+                                    1e-6, backstop_prices;   # achievable exploration tolerance
                                     run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi,
                                     opt_ad=opt_ad, stock_ad=stock_ad, cbudget=cbudget,
                                     cost_cap=cost_cap, ext_starting_points=sp)
@@ -445,6 +482,202 @@ function sweep_cost_caps(caps::Vector{Float64}, n_starts::Int, optimization_algo
 
         println("Results saved to: $output_directory")
     end
+
+    return results
+end
+
+
+"""
+    homotopy_solve(steps, initial_solution, optimization_algorithm, n_opt_periods,
+                    backstop_prices; kwargs...)
+
+Continuation/homotopy across multiple constraint parameters (cost_cap + cbudget).
+Traces the solution path from a loose constraint to the target, using each step's
+solution as warm-start for the next. This is more robust than cold-starting a
+tightly-constrained problem because AUGLAG can calibrate its Lagrange multipliers
+gradually.
+
+Each element of `steps` is a NamedTuple with fields `cost_cap` and `cbudget`.
+Steps should be ordered from loosest to tightest constraints.
+
+Returns a vector of NamedTuples with fields:
+  step, cost_cap, cbudget, utility, cca, max_cost, feasible, policy_vector, result
+"""
+function homotopy_solve(
+    steps::Vector{<:NamedTuple},
+    initial_solution::Vector{Float64},
+    optimization_algorithm::Symbol,
+    n_opt_periods::Int,
+    backstop_prices::Array{Float64,2};
+    time_per_step::Int=600,
+    first_step_time::Int=1200,
+    final_step_time::Int=1500,
+    first_step_starts::Int=4,
+    final_step_starts::Int=4,
+    tolerance::Float64=1e-15,
+    ρ::Float64=0.008, η::Float64=1.5,
+    remove_negishi::Bool=true, opt_ad::Bool=true, stock_ad::Bool=true
+)
+    n_steps = length(steps)
+    @assert n_steps >= 2 "Need at least 2 homotopy steps"
+
+    results = NamedTuple[]
+    current_solution = copy(initial_solution)
+
+    println("\n" * "="^70)
+    println("HOMOTOPY SOLVE — $(n_steps) steps")
+    println("="^70)
+    for (i, s) in enumerate(steps)
+        println("  Step $i: cost_cap=$(s.cost_cap), cbudget=$(s.cbudget)")
+    end
+    println("="^70)
+
+    for (i, step) in enumerate(steps)
+        println("\n" * "#"^70)
+        println("Homotopy step $i/$(n_steps): cost_cap=$(step.cost_cap), cbudget=$(step.cbudget)")
+        println("#"^70)
+
+        step_start = time()
+        local result
+
+        if i == 1
+            # First step (loosest): multi-start from initial solution
+            println("  Strategy: multistart ($(first_step_starts) starts, $(first_step_time)s)")
+            result = multistart_optimize_rice(
+                first_step_starts, optimization_algorithm, n_opt_periods,
+                first_step_time, tolerance, backstop_prices;
+                run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi,
+                opt_ad=opt_ad, stock_ad=stock_ad,
+                cbudget=step.cbudget, cost_cap=step.cost_cap,
+                ext_starting_points=current_solution
+            )
+        elseif i == n_steps
+            # Final step (tightest): multi-start for robustness
+            println("  Strategy: multistart ($(final_step_starts) starts, $(final_step_time)s)")
+            result = multistart_optimize_rice(
+                final_step_starts, optimization_algorithm, n_opt_periods,
+                final_step_time, tolerance, backstop_prices;
+                run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi,
+                opt_ad=opt_ad, stock_ad=stock_ad,
+                cbudget=step.cbudget, cost_cap=step.cost_cap,
+                ext_starting_points=current_solution
+            )
+        else
+            # Middle steps: single-start from previous + perturbed alternative
+            println("  Strategy: single-start + perturbed ($(time_per_step)s)")
+            n_regions = 2
+
+            # Primary: warm-start from previous solution
+            result_a = optimize_rice(
+                optimization_algorithm, n_opt_periods, time_per_step,
+                tolerance, backstop_prices;
+                run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi,
+                opt_ad=opt_ad, stock_ad=stock_ad,
+                cbudget=step.cbudget, cost_cap=step.cost_cap,
+                ext_starting_points=current_solution
+            )
+
+            # Alternative: perturbed start
+            perturbed = perturb_solution(current_solution, 0.05, n_opt_periods, n_regions, stock_ad)
+            result_b = optimize_rice(
+                optimization_algorithm, n_opt_periods, time_per_step,
+                tolerance, backstop_prices;
+                run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi,
+                opt_ad=opt_ad, stock_ad=stock_ad,
+                cbudget=step.cbudget, cost_cap=step.cost_cap,
+                ext_starting_points=perturbed
+            )
+
+            # Pick the better feasible result
+            feas_a = check_feasibility(result_a[7], step.cbudget, step.cost_cap)
+            feas_b = check_feasibility(result_b[7], step.cbudget, step.cost_cap)
+            util_a = result_a[9]
+            util_b = result_b[9]
+
+            if feas_a && feas_b
+                result = util_a >= util_b ? result_a : result_b
+                println("  Both feasible: picked $(util_a >= util_b ? "primary" : "perturbed") ($(max(util_a, util_b)))")
+            elseif feas_a
+                result = result_a
+                println("  Only primary feasible ($util_a)")
+            elseif feas_b
+                result = result_b
+                println("  Only perturbed feasible ($util_b)")
+            else
+                # Neither feasible — retry with 2× time
+                println("  ⚠ Neither feasible! Retrying with 2× time ($(2*time_per_step)s)...")
+                result = optimize_rice(
+                    optimization_algorithm, n_opt_periods, 2 * time_per_step,
+                    tolerance, backstop_prices;
+                    run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi,
+                    opt_ad=opt_ad, stock_ad=stock_ad,
+                    cbudget=step.cbudget, cost_cap=step.cost_cap,
+                    ext_starting_points=util_a >= util_b ? result_a[1] : result_b[1]
+                )
+            end
+        end
+
+        # Extract diagnostics
+        model = result[7]
+        utility = result[9]
+        cca = model[:emissions, :CCA][end]
+        max_cost = maximum(model[:neteconomy, :TOTAL_COST])
+        feasible = check_feasibility(model, step.cbudget, step.cost_cap)
+
+        # Smoothness metric: max absolute period-to-period jump in MIU (first 20 periods)
+        miu = model[:emissions, :MIU]
+        n_plot = min(20, size(miu, 1))
+        smoothness = maximum(abs.(diff(miu[1:n_plot, :], dims=1)))
+
+        elapsed = round(time() - step_start, digits=1)
+
+        push!(results, (
+            step=i,
+            cost_cap=step.cost_cap,
+            cbudget=step.cbudget,
+            utility=utility,
+            cca=cca,
+            max_cost=max_cost,
+            feasible=feasible,
+            policy_vector=result[1],
+            result=result,
+            smoothness=smoothness,
+            elapsed=elapsed
+        ))
+
+        # Log
+        println("\n  --- Step $i summary ---")
+        println("  Utility:     $(round(utility, sigdigits=8))")
+        println("  CCA:         $(round(cca, sigdigits=6)) GtC $(step.cbudget !== nothing ? "(budget=$(step.cbudget))" : "")")
+        println("  Max cost:    $(round(max_cost, sigdigits=4)) $(step.cost_cap !== nothing ? "(cap=$(step.cost_cap))" : "")")
+        println("  Feasible:    $feasible")
+        println("  Smoothness:  $(round(smoothness, sigdigits=3)) (max MIU jump)")
+        println("  Time:        $(elapsed)s")
+
+        # Update warm-start for next step
+        current_solution = result[1]
+    end
+
+    # Final summary table
+    println("\n" * "="^70)
+    println("HOMOTOPY SUMMARY")
+    println("="^70)
+    header = rpad("Step", 6) * rpad("cbudget", 10) * rpad("Utility", 14) * rpad("CCA", 10) * rpad("MaxCost", 10) * rpad("Feasible", 10) * rpad("Smooth", 8) * rpad("Time", 8)
+    println(header)
+    println("-"^length(header))
+    for r in results
+        cb_str = r.cbudget !== nothing ? string(round(r.cbudget, digits=0)) : "—"
+        row = rpad(string(r.step), 6) *
+              rpad(cb_str, 10) *
+              rpad(string(round(r.utility, sigdigits=8)), 14) *
+              rpad(string(round(r.cca, sigdigits=6)), 10) *
+              rpad(string(round(r.max_cost, sigdigits=4)), 10) *
+              rpad(string(r.feasible), 10) *
+              rpad(string(round(r.smoothness, sigdigits=3)), 8) *
+              rpad(string(r.elapsed), 8)
+        println(row)
+    end
+    println("="^70)
 
     return results
 end
