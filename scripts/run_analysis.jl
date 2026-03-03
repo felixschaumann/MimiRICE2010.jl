@@ -71,7 +71,7 @@ tolerance_rice = 1e-15
 # tolerance_fund = 1e-10
 
 # Multi-start optimization (hierarchical warm-up + structured multi-start + refinement)
-use_multistart = true
+use_multistart = false
 n_multistart = 8  # number of starting points in Phase 2
 
 #%%
@@ -87,6 +87,8 @@ println()
 backstop_rice = create_rice(ρ, η, remove_negishi)
 run(backstop_rice)
 backstop_prices = backstop_rice[:emissions, :pbacktime] .* 1000
+base_alpha = compute_negishi_weights(backstop_rice)
+println("Negishi weights computed from standard (no-adaptation) BAU model")
 output_directory = joinpath(@__DIR__, "../", "results", results_folder, "rice_BAU")
 mkpath(output_directory)
 save(joinpath(output_directory, "Emissions.csv"), DataFrame(backstop_rice[:emissions, :EIND], :auto))
@@ -128,8 +130,8 @@ end
 # Run RICE Utilitarian Optimization.
 #------------------------------------------------------------------------------------------------------
 
-opt_ad = true # whether to optimise (endogenise) adaptation or have it exogenous/fixed
-stock_ad = true # whether to have stock adaptation (true) or flow adaptation (false)
+opt_ad = true # whether to optimise (endogenise) adaptation or not have it at all
+stock_ad = false # whether to have stock adaptation (true) or flow adaptation (false)
 ad_string = opt_ad ? "ad_" : ""
 if opt_ad == true
     ad_string = "var_ad_"
@@ -138,11 +140,11 @@ if opt_ad == true
     end
 end
 
-carbon_budget = nothing #1022.5950757761052 # 921.0
+carbon_budget = nothing # 1018.0828694488544 #1022.5950757761052 # 921.0
 cost_cap = 0.008 # 0.01 # 0.005 # 0.003
 
 # Load external starting points if available (set to nothing to use defaults)
-use_ext_starting_points = true
+use_ext_starting_points = false
 ext_starting_points = nothing
 
 if use_ext_starting_points
@@ -191,9 +193,9 @@ if rice_utilitarian == true
     # Optimize model.
     if use_multistart
         println("Using multi-start optimization with $n_multistart starts...")
-        @time opt_output_rice_utilitarian, opt_emissions_rice_utilitarian, opt_mitigation_rice_utilitarian, opt_flow_adaptation_rice_utilitarian, opt_stock_adaptation_rice_utilitarian, opt_tax_rice_utilitarian, opt_model_rice_utilitarian, convergence_rice_utilitarian = multistart_optimize_rice(n_multistart, optimization_algorithm, n_opt_periods, stop_time_rice, tolerance_rice, backstop_prices, run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi, opt_ad=opt_ad, stock_ad=stock_ad, cbudget=carbon_budget, cost_cap=cost_cap, ext_starting_points=ext_starting_points)
+        @time opt_output_rice_utilitarian, opt_emissions_rice_utilitarian, opt_mitigation_rice_utilitarian, opt_flow_adaptation_rice_utilitarian, opt_stock_adaptation_rice_utilitarian, opt_tax_rice_utilitarian, opt_model_rice_utilitarian, convergence_rice_utilitarian = multistart_optimize_rice(n_multistart, optimization_algorithm, n_opt_periods, stop_time_rice, tolerance_rice, backstop_prices, run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi, opt_ad=opt_ad, stock_ad=stock_ad, cbudget=carbon_budget, cost_cap=cost_cap, ext_starting_points=ext_starting_points, alpha_override=base_alpha)
     else
-        @time opt_output_rice_utilitarian, opt_emissions_rice_utilitarian, opt_mitigation_rice_utilitarian, opt_flow_adaptation_rice_utilitarian, opt_stock_adaptation_rice_utilitarian, opt_tax_rice_utilitarian, opt_model_rice_utilitarian, convergence_rice_utilitarian = optimize_rice(optimization_algorithm, n_opt_periods, stop_time_rice, tolerance_rice, backstop_prices, run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi, opt_ad=opt_ad, stock_ad=stock_ad, cbudget=carbon_budget, cost_cap=cost_cap, ext_starting_points=ext_starting_points)
+        @time opt_output_rice_utilitarian, opt_emissions_rice_utilitarian, opt_mitigation_rice_utilitarian, opt_flow_adaptation_rice_utilitarian, opt_stock_adaptation_rice_utilitarian, opt_tax_rice_utilitarian, opt_model_rice_utilitarian, convergence_rice_utilitarian = optimize_rice(optimization_algorithm, n_opt_periods, stop_time_rice, tolerance_rice, backstop_prices, run_utilitarian=true, ρ=ρ, η=η, remove_negishi=remove_negishi, opt_ad=opt_ad, stock_ad=stock_ad, cbudget=carbon_budget, cost_cap=cost_cap, ext_starting_points=ext_starting_points, alpha_override=base_alpha)
     end
 
     # Create folder to store some key results.

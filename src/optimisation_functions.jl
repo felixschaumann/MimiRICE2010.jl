@@ -112,10 +112,10 @@ end
 #       m:                  An instance of RICE2010 consistent with user model settings.
 #----------------------------------------------------------------------------------------------------------------------
 
-function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float64, backstop_prices::Array{Float64,2}, remove_negishi::Bool, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing, cost_cap=nothing; model_constructor=create_rice)
+function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float64, backstop_prices::Array{Float64,2}, remove_negishi::Bool, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing, cost_cap=nothing; model_constructor=create_rice, alpha_override=nothing)
 
     # Get an instance of RICE given user settings.
-    m = model_constructor(ρ, η, remove_negishi, opt_ad, stock_ad, cbudget)
+    m = model_constructor(ρ, η, remove_negishi, opt_ad, stock_ad, cbudget; alpha_override=alpha_override)
 
     n_regions = length(m.md.dim_dict[:regions])
 
@@ -275,14 +275,14 @@ end
 #----------------------------------------------------------------------------------------------------------------------
 
 
-function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_time::Int, tolerance::Float64, backstop_prices::Array{Float64,2}; run_utilitarian::Bool=true, ρ::Float64=0.008, η::Float64=1.5, remove_negishi::Bool=true, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing, cost_cap=nothing, ext_starting_points=nothing, model_constructor=create_rice)
+function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_time::Int, tolerance::Float64, backstop_prices::Array{Float64,2}; run_utilitarian::Bool=true, ρ::Float64=0.008, η::Float64=1.5, remove_negishi::Bool=true, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing, cost_cap=nothing, ext_starting_points=nothing, model_constructor=create_rice, alpha_override=nothing)
 
     # -------------------------------------------------------------
     # Create objective function and values needed for optimization.
     #--------------------------------------------------------------
 
     # Create objective function, constraint functions, and instance of RICE, given user settings.
-    objective_function, constraint_function, cost_constraint_function, optimal_model, n_regions = construct_rice_objective(run_utilitarian, ρ, η, backstop_prices, remove_negishi, opt_ad, stock_ad, cbudget, cost_cap; model_constructor=model_constructor)
+    objective_function, constraint_function, cost_constraint_function, optimal_model, n_regions = construct_rice_objective(run_utilitarian, ρ, η, backstop_prices, remove_negishi, opt_ad, stock_ad, cbudget, cost_cap; model_constructor=model_constructor, alpha_override=alpha_override)
 
     # Set number of optimzation objectives (will differ between cost-minimization and utilitarian approaches).
     if run_utilitarian == false
@@ -315,13 +315,23 @@ function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_
                 n_objectives = n_opt_periods * n_regions * 2
                 # Upper bound is 1.0 for mitigation, 2.0 for adaptation (rescaled in constraint).
                 upper_bound = vcat(ones(n_opt_periods*n_regions), ones(n_opt_periods*n_regions) .* 1.0)
-                starting_point = vcat(ones(n_opt_periods*n_regions) .* 0.9,
-                                     ones(n_opt_periods*n_regions) .* 0.1)
+                if ext_starting_points !== nothing
+                    starting_point = ext_starting_points
+                    println("Using external starting points (length=$(length(starting_point)))")
+                else
+                    starting_point = vcat(ones(n_opt_periods*n_regions) .* 0.9,
+                                         ones(n_opt_periods*n_regions) .* 0.1)
+                end
             end
         else
             n_objectives = n_opt_periods * n_regions
             upper_bound = ones(n_objectives)
-            starting_point = ones(n_objectives) .* 0.9
+            if ext_starting_points !== nothing
+                starting_point = ext_starting_points
+                println("Using external starting points (length=$(length(starting_point)))")
+            else
+                starting_point = ones(n_objectives) .* 0.9
+            end
         end
         lower_bound = zeros(n_objectives)
     end

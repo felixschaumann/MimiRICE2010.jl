@@ -24,20 +24,25 @@ include(joinpath(@__DIR__, "..", "src", "new_components", "ad_emissions_componen
     compute_negishi_weights(m)
 
 Run the model at BAU and recompute Negishi welfare weights (α) so that
-weighted marginal utilities are equalized across regions in every period.
+the marginal social value of aggregate consumption is equalized across
+regions in every period.
 
-The Negishi condition requires:
-    scale1[r] * α[t,r] * l[t,r] * rr[t,r] * CPC[t,r]^(-η) = const  ∀ r
+Since CPC = 1000·C/l, population cancels in ∂W/∂C:
+    ∂W/∂C[t,r] = 10000 · scale1[r] · α[t,r] · rr[t,r] · CPC[t,r]^(-η)
+
+The Negishi condition (∂W/∂C equal across r) therefore requires:
+    scale1[r] · α[t,r] · rr[t,r] · CPC[t,r]^(-η) = const  ∀ r
 
 Solving for α:
-    α[t,r] ∝ 1 / (scale1[r] * l[t,r] * rr[t,r] * CPC[t,r]^(-η))
+    α[t,r] ∝ 1 / (scale1[r] · rr[t,r] · CPC[t,r]^(-η))
 
 Normalized so that the geometric mean across regions equals 1 each period.
+This matches the original 12-region RICE calibration where scale1 was set
+so that scale1[r] · CPC[1,r]^(-η) = const for all regions.
 """
 function compute_negishi_weights(m)
     run(m)
     CPC    = m[:neteconomy, :CPC]      # T×R
-    l      = m[:welfare, :l]            # T×R
     rr     = m[:welfare, :rr]           # T×R
     scale1 = m[:welfare, :scale1]       # R-vector
     elasmu = m[:welfare, :elasmu]       # R-vector
@@ -46,7 +51,7 @@ function compute_negishi_weights(m)
     T, R = size(CPC)
     new_alpha = zeros(T, R)
     for t in 1:T
-        raw = [1.0 / (scale1[r] * l[t,r] * rr[t,r] * CPC[t,r]^(-η)) for r in 1:R]
+        raw = [1.0 / (scale1[r] * rr[t,r] * CPC[t,r]^(-η)) for r in 1:R]
         geo_mean = prod(raw)^(1/R)
         new_alpha[t,:] = raw ./ geo_mean   # geometric mean = 1 each period
     end
@@ -55,7 +60,7 @@ end
 
 
 # Create a function to construct an updated version of RICE2010.
-function create_rice(ρ::Float64, η::Float64, remove_negishi::Bool, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing)
+function create_rice(ρ::Float64, η::Float64, remove_negishi::Bool, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing; alpha_override=nothing)
 
     # ---------------------------------------------
     # Create MimiRICE2010 model and set parameters.
@@ -150,8 +155,12 @@ function create_rice(ρ::Float64, η::Float64, remove_negishi::Bool, opt_ad::Boo
 
     # Recalibrate Negishi weights from BAU per-capita consumption.
     if remove_negishi == false
-        new_alpha = compute_negishi_weights(m)
-        update_param!(m, :alpha, new_alpha)
+        if alpha_override !== nothing
+            update_param!(m, :alpha, alpha_override)
+        else
+            new_alpha = compute_negishi_weights(m)
+            update_param!(m, :alpha, new_alpha)
+        end
     end
 
     # Return user-specified model.
@@ -166,7 +175,7 @@ end
 #-------------------------------------------------------------------------------
 
 function create_rice_symmetric(ρ::Float64, η::Float64, remove_negishi::Bool, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing;
-                                overrides=Dict{Symbol,Any}())
+                                overrides=Dict{Symbol,Any}(), alpha_override=nothing)
 
     # Read raw 2-region parameters from Excel
     datafile = joinpath(@__DIR__, "..", "data", "RICE_2010_base_000.xlsm")
@@ -273,8 +282,12 @@ function create_rice_symmetric(ρ::Float64, η::Float64, remove_negishi::Bool, o
 
     # Recalibrate Negishi weights from BAU per-capita consumption.
     if remove_negishi == false
-        new_alpha = compute_negishi_weights(m)
-        update_param!(m, :alpha, new_alpha)
+        if alpha_override !== nothing
+            update_param!(m, :alpha, alpha_override)
+        else
+            new_alpha = compute_negishi_weights(m)
+            update_param!(m, :alpha, new_alpha)
+        end
     end
 
     return m
@@ -289,7 +302,7 @@ end
 #-------------------------------------------------------------------------------
 
 function create_rice_partial_symmetric(ρ::Float64, η::Float64, remove_negishi::Bool, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing;
-                                        symmetrize=Symbol[])
+                                        symmetrize=Symbol[], alpha_override=nothing)
 
     # Read raw 2-region parameters from Excel
     datafile = joinpath(@__DIR__, "..", "data", "RICE_2010_base_000.xlsm")
@@ -381,8 +394,12 @@ function create_rice_partial_symmetric(ρ::Float64, η::Float64, remove_negishi:
 
     # Recalibrate Negishi weights from BAU per-capita consumption.
     if remove_negishi == false
-        new_alpha = compute_negishi_weights(m)
-        update_param!(m, :alpha, new_alpha)
+        if alpha_override !== nothing
+            update_param!(m, :alpha, alpha_override)
+        else
+            new_alpha = compute_negishi_weights(m)
+            update_param!(m, :alpha, new_alpha)
+        end
     end
 
     return m

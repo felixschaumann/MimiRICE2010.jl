@@ -80,8 +80,8 @@ end
 # Helper: create model constructor closure for a given set of params to symmetrize
 #------------------------------------------------------------------------------------------------------
 function make_partial_symmetric_constructor(symmetrize::Vector{Symbol})
-    return (ρ, η, remove_negishi, opt_ad=false, stock_ad=false, cbudget=nothing) ->
-        create_rice_partial_symmetric(ρ, η, remove_negishi, opt_ad, stock_ad, cbudget; symmetrize=symmetrize)
+    return (ρ, η, remove_negishi, opt_ad=false, stock_ad=false, cbudget=nothing; alpha_override=nothing) ->
+        create_rice_partial_symmetric(ρ, η, remove_negishi, opt_ad, stock_ad, cbudget; symmetrize=symmetrize, alpha_override=alpha_override)
 end
 
 #------------------------------------------------------------------------------------------------------
@@ -117,6 +117,16 @@ for (exp_name, symmetrize_params) in experiments
         mc = make_partial_symmetric_constructor(symmetrize_params)
     end
 
+    # Compute Negishi weights ONCE from this experiment's Config 1 model (no adaptation)
+    # and share across all configs within this experiment
+    if isempty(symmetrize_params)
+        base_model = create_rice(ρ, η, remove_negishi)
+    else
+        base_model = create_rice_partial_symmetric(ρ, η, remove_negishi; symmetrize=symmetrize_params)
+    end
+    exp_alpha = compute_negishi_weights(base_model)
+    println("  Negishi weights computed from Config 1 model for this experiment")
+
     # Track the previous config's solution for warm-starting Config 4f from Config 3f
     prev_solution = nothing
     prev_config_name = ""
@@ -143,7 +153,7 @@ for (exp_name, symmetrize_params) in experiments
                 opt_ad=cfg.opt_ad, stock_ad=cfg.stock_ad,
                 cbudget=cfg.cbudget, cost_cap=cfg.cost_cap,
                 ext_starting_points=ext_sp,
-                model_constructor=mc
+                model_constructor=mc, alpha_override=exp_alpha
             )
         catch e
             println("  ERROR: $e")
