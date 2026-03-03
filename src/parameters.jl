@@ -78,9 +78,8 @@ function getrice2010parameters(filename)
     p[:a2] = aggregate_regions(getparam_single(f, "B25:B25", rice_regions), region_mapping, rice_regions, mean) # Damage quadratic term
     p[:a3] = aggregate_regions(getparam_single(f, "B26:B26", rice_regions), region_mapping, rice_regions, mean) # Damage exponent
 
-    # Welfare Weights
+    # Welfare Weights (initial values; recomputed by compute_negishi_weights() in create_rice.jl)
     alpha0 = transpose(f["Data"]["B359:BI370"]) # Read in alpha
-    # !!! NOT PROPERLY AGGREGATED (UNWEIGHTED AVERAGE) !!!
     p[:alpha] = aggregate_regions(convert(Array{Float64}, alpha0), region_mapping, rice_regions, mean) # Convert to type used by Mimi
 
     # Abatement cost
@@ -96,14 +95,14 @@ function getrice2010parameters(filename)
     # p[:scale1] = getparam_single(f, "B52:B52", regions)
     p[:scale1] = aggregate_regions(getparam_single(f, "B52:B52", rice_regions), region_mapping, rice_regions, mean)
 
-    # !!! NOT PROPERLY AGGREGATED (UNWEIGHTED AVERAGE) !!!
     # Additive scaling coefficient (combines two additive scaling coefficients from RICE for calculating utility with welfare weights)
+    # Summed across regions (additive constant in utility)
     scale2 = Array{Float64}(undef, length(rice_regions))
     for (i,r) in enumerate(rice_regions)
         data = f[r]["B53:C53"]
         scale2[i] = data[1] - data[2]
     end
-    p[:scale2] = aggregate_regions(scale2, region_mapping, rice_regions, mean)
+    p[:scale2] = aggregate_regions(scale2, region_mapping, rice_regions, sum)
 
     # p[:savebase] = getparam_timeseries(f, "B97:BI97", regions, T) # Optimized savings rate in base case for RICE2010; not currently used in constructrice
     # p[:optlrsav] = getparam_single(f, "BI97:BI97", regions) # Optimized savings rate in base case for RICE2010 for last period (fraction of gross output); not currently used in constructrice

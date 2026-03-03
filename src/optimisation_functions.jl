@@ -112,10 +112,10 @@ end
 #       m:                  An instance of RICE2010 consistent with user model settings.
 #----------------------------------------------------------------------------------------------------------------------
 
-function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float64, backstop_prices::Array{Float64,2}, remove_negishi::Bool, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing, cost_cap=nothing)
+function construct_rice_objective(run_utilitarian::Bool, ρ::Float64, η::Float64, backstop_prices::Array{Float64,2}, remove_negishi::Bool, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing, cost_cap=nothing; model_constructor=create_rice)
 
     # Get an instance of RICE given user settings.
-    m = create_rice(ρ, η, remove_negishi, opt_ad, stock_ad, cbudget)
+    m = model_constructor(ρ, η, remove_negishi, opt_ad, stock_ad, cbudget)
 
     n_regions = length(m.md.dim_dict[:regions])
 
@@ -275,14 +275,14 @@ end
 #----------------------------------------------------------------------------------------------------------------------
 
 
-function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_time::Int, tolerance::Float64, backstop_prices::Array{Float64,2}; run_utilitarian::Bool=true, ρ::Float64=0.008, η::Float64=1.5, remove_negishi::Bool=true, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing, cost_cap=nothing, ext_starting_points=nothing)
+function optimize_rice(optimization_algorithm::Symbol, n_opt_periods::Int, stop_time::Int, tolerance::Float64, backstop_prices::Array{Float64,2}; run_utilitarian::Bool=true, ρ::Float64=0.008, η::Float64=1.5, remove_negishi::Bool=true, opt_ad::Bool=false, stock_ad::Bool=false, cbudget=nothing, cost_cap=nothing, ext_starting_points=nothing, model_constructor=create_rice)
 
     # -------------------------------------------------------------
     # Create objective function and values needed for optimization.
     #--------------------------------------------------------------
 
     # Create objective function, constraint functions, and instance of RICE, given user settings.
-    objective_function, constraint_function, cost_constraint_function, optimal_model, n_regions = construct_rice_objective(run_utilitarian, ρ, η, backstop_prices, remove_negishi, opt_ad, stock_ad, cbudget, cost_cap)
+    objective_function, constraint_function, cost_constraint_function, optimal_model, n_regions = construct_rice_objective(run_utilitarian, ρ, η, backstop_prices, remove_negishi, opt_ad, stock_ad, cbudget, cost_cap; model_constructor=model_constructor)
 
     # Set number of optimzation objectives (will differ between cost-minimization and utilitarian approaches).
     if run_utilitarian == false
